@@ -91,6 +91,33 @@ describe("Git worktree manager", () => {
     expect(() => git(repositoryRoot, ["show", `${worktree.branch}:result.txt`])).toThrow();
   });
 
+  it("rejects a managed branch whose history no longer descends from its persisted base", async () => {
+    const { repositoryRoot, managedRoot } = await repository();
+    const manager = new GitWorktreeManager();
+    const worktree = await manager.create("run_1234abcd", await manager.inspectRepository(repositoryRoot), managedRoot);
+    const tree = git(worktree.path, ["write-tree"]);
+    const unrelated = git(worktree.path, [
+      "-c", "user.name=Pi Loops Test",
+      "-c", "user.email=test@example.invalid",
+      "commit-tree", tree,
+      "-m", "unrelated root",
+    ]);
+    git(worktree.path, ["reset", "--hard", unrelated]);
+
+    await expect(manager.resume(worktree)).rejects.toThrow("base commit is not an ancestor");
+    expect(git(worktree.path, ["branch", "--show-current"])).toBe(worktree.branch);
+    expect(git(worktree.path, ["rev-parse", "HEAD"])).toBe(unrelated);
+  });
+
+  it("refuses to finalize a scheduled run with no reviewable changes", async () => {
+    const { repositoryRoot, managedRoot } = await repository();
+    const manager = new GitWorktreeManager();
+    const worktree = await manager.create("run_1234abcd", await manager.inspectRepository(repositoryRoot), managedRoot);
+
+    await expect(manager.commitReview(worktree, "scheduled result")).rejects.toThrow("no reviewable changes");
+    expect(git(worktree.path, ["status", "--porcelain"])).toBe("");
+  });
+
   it("never removes dirty unresolved worktrees", async () => {
     const { repositoryRoot, managedRoot } = await repository();
     const manager = new GitWorktreeManager();

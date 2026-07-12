@@ -32,3 +32,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Terminal attended runs now release their writer lease even if persistence, transcript, or notification callbacks fail.
 - Stored evaluator decisions now enforce the same semantic invariants as fresh evaluator responses.
 - An armed child-watchdog termination escalation is no longer disarmed during session shutdown.
+- Immediate scheduled resume now waits for a locally settled occurrence to release its claims, eliminating a resume race.
+- Run deletion now removes the run's deterministic Pi Loops-managed child-session directory while preserving unmanaged paths.
+- RPC worker startup rejects empty session IDs, reported session directories, and reported or resumed session symlinks.
+- Already-aborted worker UI requests and empty select options now fail closed before invoking parent UI callbacks.

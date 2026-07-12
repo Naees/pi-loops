@@ -78,7 +78,7 @@ describe("worker UI relay", () => {
       handled: false,
       reason: "Worker UI request contains invalid or oversized text",
     });
-    for (const options of [[], Array.from({ length: 101 }, () => "option"), [1], [oversized]]) {
+    for (const options of [[], [""], ["   "], Array.from({ length: 101 }, () => "option"), [1], [oversized]]) {
       await expect(relayWorkerUiRequest({
         type: "extension_ui_request",
         id: "request-1",
@@ -105,6 +105,50 @@ describe("worker UI relay", () => {
     }, host, controller.signal);
     controller.abort();
     await expect(result).resolves.toEqual({ handled: false, reason: "UI relay aborted" });
+  });
+
+  it("returns explicit cancellation responses for interactive methods", async () => {
+    const host = ui();
+    host.select = vi.fn(async () => undefined);
+    host.input = vi.fn(async () => undefined);
+    host.editor = vi.fn(async () => undefined);
+    for (const request of [
+      { method: "select", title: "Choose", options: ["one"] },
+      { method: "input", title: "Input" },
+      { method: "editor", title: "Edit" },
+    ]) {
+      await expect(relayWorkerUiRequest({
+        type: "extension_ui_request",
+        id: `request-${request.method}`,
+        ...request,
+      }, host, new AbortController().signal)).resolves.toEqual({
+        handled: true,
+        response: { type: "extension_ui_response", id: `request-${request.method}`, cancelled: true },
+      });
+    }
+  });
+
+  it("fails closed before calling the UI when already aborted or when the UI rejects", async () => {
+    const aborted = new AbortController();
+    aborted.abort();
+    const host = ui();
+    await expect(relayWorkerUiRequest({
+      type: "extension_ui_request",
+      id: "request-1",
+      method: "confirm",
+      title: "Allow?",
+      message: "Continue?",
+    }, host, aborted.signal)).resolves.toEqual({ handled: false, reason: "UI relay aborted" });
+    expect(host.confirm).not.toHaveBeenCalled();
+
+    host.confirm = vi.fn(async () => { throw new Error("UI failed"); });
+    await expect(relayWorkerUiRequest({
+      type: "extension_ui_request",
+      id: "request-2",
+      method: "confirm",
+      title: "Allow?",
+      message: "Continue?",
+    }, host, new AbortController().signal)).resolves.toEqual({ handled: false, reason: "UI failed" });
   });
 
   it("forwards fire-and-forget notifications without a UI", async () => {

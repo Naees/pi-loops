@@ -1,6 +1,5 @@
-import { isRecord } from "../shared/validation.js";
-
 import { errorMessage } from "../shared/errors.js";
+import { isRecord } from "../shared/validation.js";
 
 const MAX_UI_TEXT_BYTES = 16 * 1024;
 const MAX_UI_OPTIONS = 100;
@@ -52,6 +51,7 @@ export async function relayWorkerUiRequest(
   if (!isRecord(value) || value.type !== "extension_ui_request" || typeof value.id !== "string" || value.id.length === 0 || typeof value.method !== "string") {
     return { handled: false, reason: "Malformed worker UI request" };
   }
+  if (signal.aborted) return { handled: false, reason: "UI relay aborted" };
   try {
     if (value.method === "notify") {
       const message = boundedString(value.message);
@@ -67,7 +67,7 @@ export async function relayWorkerUiRequest(
     }
     if (value.method === "select") {
       if (!Array.isArray(value.options) || value.options.length === 0 || value.options.length > MAX_UI_OPTIONS ||
-        value.options.some((option) => typeof option !== "string" || Buffer.byteLength(option, "utf8") > MAX_UI_TEXT_BYTES)) {
+        value.options.some((option) => typeof option !== "string" || option.trim().length === 0 || Buffer.byteLength(option, "utf8") > MAX_UI_TEXT_BYTES)) {
         return { handled: false, reason: "Worker select request has invalid options" };
       }
       const selected = await abortable(ui.select(boundedString(value.title) as string, value.options as string[]), signal);

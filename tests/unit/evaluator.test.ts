@@ -37,6 +37,17 @@ describe("evaluator decisions", () => {
     ).toThrow("invalid shape");
   });
 
+  it.each([
+    "null",
+    "[]",
+    JSON.stringify({ complete: "yes", needsUser: false, reason: "done", failedCriteria: [], feedback: null }),
+    JSON.stringify({ complete: false, needsUser: false, reason: "   ", failedCriteria: [], feedback: null }),
+    JSON.stringify({ complete: false, needsUser: false, reason: "no", failedCriteria: [1], feedback: null }),
+    JSON.stringify({ complete: false, needsUser: false, reason: "no", failedCriteria: [], feedback: 42 }),
+  ])("rejects malformed decision payload %j", (payload) => {
+    expect(() => parseEvaluationDecision(payload)).toThrow(InvalidEvaluatorResponseError);
+  });
+
   it("rejects markdown, unknown fields, and contradictory outcomes", () => {
     expect(() => parseEvaluationDecision("```json\n{}\n```" )).toThrow(InvalidEvaluatorResponseError);
     expect(() =>

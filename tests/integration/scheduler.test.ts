@@ -86,6 +86,38 @@ async function harness() {
 }
 
 describe("schedule controller", () => {
+  it("supports project-bound create, list, delete, and idempotent shutdown", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
+    const { controller, host } = await harness();
+    const schedule = await controller.create({ expression: "in 1h", goal: "run checks" }, host);
+    expect(await controller.list(host.cwd)).toEqual([
+      expect.objectContaining({ scheduleId: schedule.scheduleId, projectRoot: await realpath(host.cwd), state: "enabled" }),
+    ]);
+    await controller.delete(schedule.scheduleId, host.cwd);
+    expect(await controller.list(host.cwd)).toEqual([]);
+    await expect(controller.delete(schedule.scheduleId, host.cwd)).rejects.toThrow("Schedule not found");
+    await controller.shutdown();
+    await expect(controller.shutdown()).resolves.toBeUndefined();
+  });
+
+  it("rejects duplicate startup and deletion while an occurrence is active", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
+    const { controller, host } = await harness();
+    let finish: ((result: { status: "finished" }) => void) | undefined;
+    const runner = vi.fn(() => new Promise<{ status: "finished" }>((resolve) => { finish = resolve; }));
+    await controller.start(host, runner);
+    await expect(controller.start(host, runner)).rejects.toThrow("already started");
+    const schedule = await controller.create({ expression: "in 1m", goal: "run checks" }, host);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
+    await expect(controller.delete(schedule.scheduleId, host.cwd)).rejects.toThrow("Stop the active scheduled run");
+    finish?.({ status: "finished" });
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]?.state).toBe("paused"));
+    await controller.shutdown();
+  });
+
   it("fires a future one-off once and retains it as completed", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));

@@ -227,6 +227,7 @@ export function writerLeasePath(dataRoot: string, projectId: string): string {
 export class RunStore {
   readonly #projectId: string;
   readonly #runsDirectory: string;
+  readonly #sessionsDirectory: string;
   readonly #expectedLeasePath: string;
   readonly #lease: WriterLease | undefined;
 
@@ -234,6 +235,7 @@ export class RunStore {
     if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
     this.#projectId = projectId;
     this.#runsDirectory = join(dataRoot, "projects", projectId, "runs");
+    this.#sessionsDirectory = join(dataRoot, "projects", projectId, "sessions");
     this.#expectedLeasePath = writerLeasePath(dataRoot, projectId);
     if (lease !== undefined && lease.path !== this.#expectedLeasePath) {
       throw new Error("Writer lease does not belong to this project store");
@@ -280,7 +282,9 @@ export class RunStore {
 
   async delete(runId: string): Promise<void> {
     await this.#assertMutationLease();
-    await rm(this.#path(runId), { force: true });
+    const runPath = this.#path(runId);
+    await rm(join(this.#sessionsDirectory, runId), { recursive: true, force: true });
+    await rm(runPath, { force: true });
   }
 
   async reconcileInterrupted(now: Date = new Date()): Promise<string[]> {

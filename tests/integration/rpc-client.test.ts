@@ -14,6 +14,18 @@ function client(program: string, overrides: Partial<ConstructorParameters<typeof
 const lineServer = `let buffer = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", chunk => { buffer += chunk; let newline; while ((newline = buffer.indexOf("\\n")) !== -1) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); if (!line) continue; const command = JSON.parse(line); console.log(JSON.stringify({ type: "response", id: command.id, command: command.type, success: true, data: { ok: true } })); } });`;
 
 describe("production RPC worker client", () => {
+  it("rejects invalid resource limits before spawning", () => {
+    for (const [name, value] of [
+      ["requestTimeoutMs", 0],
+      ["maxLineBytes", -1],
+      ["maxStderrBytes", 1.5],
+      ["maxRetainedEventBytes", Number.POSITIVE_INFINITY],
+      ["maxRetainedEvents", Number.NaN],
+    ] as const) {
+      expect(() => client(lineServer, { [name]: value })).toThrow(`${name} must be a positive safe integer`);
+    }
+  });
+
   it("correlates requests and stops idempotently", async () => {
     const rpc = client(lineServer);
     const response = await rpc.request({ type: "get_state" });
@@ -44,16 +56,25 @@ describe("production RPC worker client", () => {
   });
 
   it("cleans up timed-out and aborted requests without poisoning later correlation", async () => {
-    const rpc = client(`let buffer = ""; let count = 0; process.stdin.setEncoding("utf8"); process.stdin.on("data", chunk => { buffer += chunk; let newline; while ((newline = buffer.indexOf("\\n")) !== -1) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); if (!line) continue; const command = JSON.parse(line); count += 1; const respond = () => console.log(JSON.stringify({ type: "response", id: command.id, command: command.type, success: true })); if (count === 1) setTimeout(respond, 80); else respond(); } });`, { requestTimeoutMs: 20 });
+    const rpc = client(`let buffer = ""; let count = 0; process.stdin.setEncoding("utf8"); console.log(JSON.stringify({ type: "ready" })); process.stdin.on("data", chunk => { buffer += chunk; let newline; while ((newline = buffer.indexOf("\\n")) !== -1) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); if (!line) continue; const command = JSON.parse(line); count += 1; const respond = () => console.log(JSON.stringify({ type: "response", id: command.id, command: command.type, success: true })); if (count === 1 || command.type === "abort-late") setTimeout(respond, 250); else respond(); } });`, { requestTimeoutMs: 100 });
     try {
+      await rpc.waitFor((event) => event.type === "ready", { timeoutMs: 5_000 });
       await expect(rpc.request({ type: "first" })).rejects.toThrow("timed out: first");
       await expect(rpc.request({ type: "second" })).resolves.toEqual(expect.objectContaining({ command: "second" }));
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 300));
       await expect(rpc.request({ type: "third" })).resolves.toEqual(expect.objectContaining({ command: "third" }));
 
       const abort = new AbortController();
       abort.abort();
       await expect(rpc.request({ type: "never-written" }, abort.signal)).rejects.toMatchObject({ name: "AbortError" });
+
+      const inFlightAbort = new AbortController();
+      const aborted = rpc.request({ type: "abort-late" }, inFlightAbort.signal);
+      inFlightAbort.abort();
+      await expect(aborted).rejects.toMatchObject({ name: "AbortError" });
+      await expect(rpc.request({ type: "after-abort" })).resolves.toEqual(expect.objectContaining({ command: "after-abort" }));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await expect(rpc.request({ type: "final" })).resolves.toEqual(expect.objectContaining({ command: "final" }));
     } finally {
       await rpc.stop();
     }

@@ -52,7 +52,7 @@ process.stdin.on("data", chunk => {
 });
 `;
 
-async function harness() {
+async function harness(options: { program?: string; version?: string } = {}) {
   const root = await mkdtemp(join(tmpdir(), "pi-loops-worker-manager-"));
   const cwd = join(root, "worktree");
   const sessions = join(root, "sessions");
@@ -72,8 +72,8 @@ async function harness() {
     extensionPath: "/tmp/pi-loops-extension.ts",
     resolveLaunch: async () => ({
       executable: process.execPath,
-      argsPrefix: ["-e", fakeRpcProgram, "--"],
-      version: "0.80.6",
+      argsPrefix: ["-e", options.program ?? fakeRpcProgram, "--"],
+      version: options.version ?? "0.80.6",
       source: "current-node-cli",
     }),
   });
@@ -90,6 +90,28 @@ async function harness() {
 
 function expectProcessGone(pid: number): void {
   expect(() => process.kill(pid, 0)).toThrow();
+}
+
+function handshakeProgram(data: string): string {
+  return `
+const fs = require("node:fs");
+fs.writeFileSync(process.env.PI_LOOPS_TEST_ARGV, JSON.stringify({ pid: process.pid }));
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let newline;
+  while ((newline = buffer.indexOf("\\n")) !== -1) {
+    const line = buffer.slice(0, newline);
+    buffer = buffer.slice(newline + 1);
+    if (!line) continue;
+    const command = JSON.parse(line);
+    const response = { type: "response", id: command.id, command: command.type, success: true };
+    if (command.type === "get_state") response.data = ${data};
+    console.log(JSON.stringify(response));
+  }
+});
+`;
 }
 
 describe("RPC worker manager", () => {
@@ -201,8 +223,98 @@ describe("RPC worker manager", () => {
     }
   });
 
-  it("fails closed on unsupported platforms", async () => {
-    const manager = new RpcWorkerManager({ platform: "linux" });
+  it("rejects invalid deadlines and unvalidated Pi versions before accepting a worker", async () => {
+    const resolveLaunch = vi.fn(async () => ({
+      executable: process.execPath,
+      argsPrefix: [] as string[],
+      version: "0.80.6",
+      source: "current-node-cli" as const,
+    }));
+    const manager = new RpcWorkerManager({ platform: "darwin", resolveLaunch });
+    for (const absoluteDeadlineMs of [Date.now(), Date.now() - 1, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(manager.launch({
+        runId: "run_1234abcd",
+        cwd: process.cwd(),
+        sessionDirectory: join(process.cwd(), ".unused"),
+        absoluteDeadlineMs,
+      }, hostUi())).rejects.toThrow("future absolute deadline");
+    }
+    expect(resolveLaunch).not.toHaveBeenCalled();
+
+    const mismatched = await harness({ version: "0.80.5" });
+    try {
+      await expect(mismatched.manager.launch({
+        runId: "run_1234abcd",
+        cwd: mismatched.cwd,
+        sessionDirectory: mismatched.sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+      }, hostUi())).rejects.toThrow("require validated Pi 0.80.6");
+      await expect(readFile(mismatched.argvFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      mismatched.restore();
+    }
+  });
+
+  it("fails malformed handshakes closed and reaps every spawned worker", async () => {
+    for (const [data, message] of [
+      ['{ isStreaming: true, sessionId: "session-1", sessionFile: process.env.PI_LOOPS_TEST_SESSION }', "handshake is invalid"],
+      ['{ isStreaming: false, sessionId: "", sessionFile: process.env.PI_LOOPS_TEST_SESSION }', "handshake is invalid"],
+      ['{ isStreaming: false, sessionId: "session-1", sessionFile: 42 }', "handshake is invalid"],
+    ] as const) {
+      const malformed = await harness({ program: handshakeProgram(data) });
+      try {
+        await expect(malformed.manager.launch({
+          runId: "run_1234abcd",
+          cwd: malformed.cwd,
+          sessionDirectory: malformed.sessions,
+          absoluteDeadlineMs: Date.now() + 60_000,
+        }, hostUi())).rejects.toThrow(message);
+        const launched = JSON.parse(await readFile(malformed.argvFile, "utf8")) as { pid: number };
+        expectProcessGone(launched.pid);
+      } finally {
+        malformed.restore();
+      }
+    }
+  });
+
+  it("requires reported and resumed sessions to be regular non-symlink files", async () => {
+    const reportedDirectory = await harness();
+    try {
+      await mkdir(reportedDirectory.sessionFile, { recursive: true });
+      await expect(reportedDirectory.manager.launch({
+        runId: "run_1234abcd",
+        cwd: reportedDirectory.cwd,
+        sessionDirectory: reportedDirectory.sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+      }, hostUi())).rejects.toThrow("must be a regular file");
+      const launched = JSON.parse(await readFile(reportedDirectory.argvFile, "utf8")) as { pid: number };
+      expectProcessGone(launched.pid);
+    } finally {
+      reportedDirectory.restore();
+    }
+
+    const resumedSymlink = await harness();
+    try {
+      await mkdir(resumedSymlink.sessions, { recursive: true });
+      const actual = join(resumedSymlink.sessions, "actual.jsonl");
+      const linked = join(resumedSymlink.sessions, "linked.jsonl");
+      await writeFile(actual, "session\n");
+      await symlink(actual, linked);
+      await expect(resumedSymlink.manager.launch({
+        runId: "run_1234abcd",
+        cwd: resumedSymlink.cwd,
+        sessionDirectory: resumedSymlink.sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+        resume: { sessionId: "session-1", sessionFile: linked },
+      }, hostUi())).rejects.toThrow("regular non-symlink file");
+      await expect(readFile(resumedSymlink.argvFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      resumedSymlink.restore();
+    }
+  });
+
+  it.each(["linux", "win32"] as const)("fails closed on unsupported platform %s", async (platform) => {
+    const manager = new RpcWorkerManager({ platform });
     await expect(manager.launch({
       runId: "run_1234abcd",
       cwd: process.cwd(),

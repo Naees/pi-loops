@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -63,6 +63,17 @@ describe("schedule store", () => {
     const { dataRoot, projectRoot, projectId } = await harness();
     const unlocked = new ScheduleStore(dataRoot, projectId);
     await expect(unlocked.save(schedule(projectRoot, projectId))).rejects.toThrow("requires the project schedule lease");
+  });
+
+  it("rejects malformed and oversized schedules read from disk", async () => {
+    const { store, dataRoot, projectId } = await harness();
+    const schedulesDirectory = join(dataRoot, "projects", projectId, "schedules");
+    await mkdir(schedulesDirectory, { recursive: true });
+    const path = join(schedulesDirectory, "schedule_00000001.json");
+    await writeFile(path, "not-json");
+    await expect(store.load("schedule_00000001")).rejects.toBeInstanceOf(SyntaxError);
+    await writeFile(path, Buffer.alloc(1024 * 1024 + 1));
+    await expect(store.load("schedule_00000001")).rejects.toThrow("exceeds 1048576 bytes");
   });
 
   it("rejects incoherent state and project bindings", async () => {

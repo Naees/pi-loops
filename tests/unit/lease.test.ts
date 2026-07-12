@@ -2,7 +2,16 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { LeaseOwnershipError, LeaseUnavailableError, acquireWriterLease, assertWriterLease, releaseWriterLease } from "../../src/storage/lease.js";
+import {
+  LeaseOwnershipError,
+  LeaseUnavailableError,
+  acquireWriterLease,
+  assertWriterLease,
+  assertWriterLeases,
+  combineWriterLeaseSignals,
+  releaseWriterLease,
+  releaseWriterLeases,
+} from "../../src/storage/lease.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -43,6 +52,31 @@ describe("writer leases", () => {
     await expect(assertWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
     const nextLease = await acquireWriterLease(path, 5_000);
     await releaseWriterLease(nextLease);
+  });
+
+  it("fails closed and signals compromise when lease metadata ownership changes", async () => {
+    const path = await leasePath();
+    const lease = await acquireWriterLease(path, 5_000);
+    await writeFile(path, JSON.stringify({ ...lease.record, token: "replacement-owner" }));
+
+    await expect(assertWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
+    expect(lease.signal.aborted).toBe(true);
+    expect(lease.signal.reason).toBeInstanceOf(LeaseOwnershipError);
+    await expect(releaseWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
+  });
+
+  it("combines, asserts, and releases multiple leases", async () => {
+    const first = await acquireWriterLease(await leasePath(), 5_000);
+    const second = await acquireWriterLease(await leasePath(), 5_000);
+    expect(combineWriterLeaseSignals([first])).toBe(first.signal);
+    const combined = combineWriterLeaseSignals([first, second]);
+    expect(combined.aborted).toBe(false);
+    await expect(assertWriterLeases([first, second])).resolves.toBeUndefined();
+    await releaseWriterLeases([first, second]);
+    await expect(assertWriterLease(first)).rejects.toBeInstanceOf(LeaseOwnershipError);
+    await expect(assertWriterLease(second)).rejects.toBeInstanceOf(LeaseOwnershipError);
+    expect(() => combineWriterLeaseSignals([])).toThrow("At least one writer lease");
+    await expect(assertWriterLeases([])).rejects.toThrow("At least one writer lease");
   });
 
   it("signals active owners when the proper-lockfile guard is compromised", async () => {

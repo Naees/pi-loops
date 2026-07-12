@@ -89,7 +89,7 @@ function worktrees(projectRoot: string) {
 function workers() {
   const worker = {
     identity: {
-      pid: 123,
+      pid: 2_147_483_647,
       ownershipToken: "ownership-token",
       piVersion: "0.80.6",
       sessionId: "session-id",
@@ -267,6 +267,120 @@ describe("unattended run controller", () => {
       budgetDeadlineAt: deadline,
       totalCycles: 2,
     }));
+  });
+
+  it("stalls after equivalent failures and resumes with a new finite budget epoch", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const incomplete: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({
+        complete: false,
+        needsUser: false,
+        reason: "same failure",
+        failedCriteria: ["review"],
+        feedback: "try again",
+      })),
+    };
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", incomplete, host, new AbortController().signal, "start"))
+      .resolves.toEqual({ status: "interrupted" });
+    const stalled = await new RunStore(dataRoot, projectId).load("run_1234abcd");
+    expect(stalled).toEqual(expect.objectContaining({ state: "stalled", cycle: 2, budgetEpoch: 1, equivalentFailures: 2 }));
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+      .resolves.toEqual({ status: "finished" });
+    const completed = await new RunStore(dataRoot, projectId).load("run_1234abcd");
+    expect(completed).toEqual(expect.objectContaining({ state: "completed", budgetEpoch: 2, cycle: 1, totalCycles: 3 }));
+    expect(completed?.budgetHistory).toEqual([
+      expect.objectContaining({ epoch: 1, cycles: 2, reason: "same failure" }),
+    ]);
+  });
+
+  it("makes missing deterministic evidence authoritative and enforces the cycle budget", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const completionEvaluator: CompletionEvaluator = { evaluate: vi.fn() };
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const boundedSchedule: ScheduleRecord = {
+      ...schedule,
+      verifierCommands: ["npm test"],
+      budget: { ...schedule.budget, maxCycles: 1, stallThreshold: 3 },
+    };
+
+    await expect(controller.runSchedule(boundedSchedule, "run_1234abcd", completionEvaluator, host, new AbortController().signal))
+      .resolves.toEqual({ status: "interrupted" });
+    expect(completionEvaluator.evaluate).not.toHaveBeenCalled();
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "budget_exhausted",
+      cycle: 1,
+      latestEvidence: [expect.objectContaining({ command: "npm test", observed: false, passed: false })],
+    }));
+  });
+
+  it("persists cancellation, stops the worker, and releases active state", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    rpc.worker.runCycle.mockImplementation((_message: string, signal?: AbortSignal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
+    }));
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const abort = new AbortController();
+    const running = controller.runSchedule(schedule, "run_1234abcd", evaluator, host, abort.signal);
+    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"));
+    abort.abort();
+
+    await expect(running).resolves.toEqual({ status: "interrupted" });
+    expect(rpc.worker.stop).toHaveBeenCalled();
+    expect(controller.activeRunId).toBeUndefined();
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "interrupted",
+      terminalReason: "Scheduled worker was cancelled",
+    }));
+  });
+
+  it("rejects duplicate starts and schedule identity changes on restart", async () => {
+    const { dataRoot, projectRoot, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const needsUser: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({ complete: false, needsUser: true, reason: "guidance", failedCriteria: [], feedback: null })),
+    };
+    await controller.runSchedule(schedule, "run_1234abcd", needsUser, host, new AbortController().signal, "start");
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal, "start"))
+      .rejects.toThrow("already exists");
+    await expect(controller.runSchedule({ ...schedule, goal: "different goal" }, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+      .rejects.toThrow("not safely resumable");
+    expect(git.resume).not.toHaveBeenCalled();
+  });
+
+  it("fails closed rather than attaching to a persisted live worker PID", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const needsUser: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({ complete: false, needsUser: true, reason: "guidance", failedCriteria: [], feedback: null })),
+    };
+    await controller.runSchedule(schedule, "run_1234abcd", needsUser, host, new AbortController().signal, "start");
+    const lease = await acquireWriterLease(writerLeasePath(dataRoot, projectId), 30_000);
+    try {
+      const store = new RunStore(dataRoot, projectId, lease);
+      const persisted = await store.load("run_1234abcd");
+      if (!persisted?.worker) throw new Error("Expected persisted worker metadata");
+      await store.save({ ...persisted, worker: { ...persisted.worker, childPid: process.pid } });
+    } finally {
+      await releaseWriterLease(lease);
+    }
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+      .rejects.toThrow(`live worker process: ${process.pid}`);
+    expect(git.resume).not.toHaveBeenCalled();
   });
 
   it("fails closed on an unhandled worker interaction", async () => {

@@ -118,6 +118,47 @@ describe("Pi extension registration", () => {
     expect(appendEntry).toHaveBeenCalledWith("pi-loops.run", expect.objectContaining({ state: "cancelled" }));
   });
 
+  it("validates, confirms, and persists schedules through the model-facing tool", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx } = await context();
+    const { api, registerTool } = mockApi();
+    piLoopsExtension(api);
+    const tool = registerTool.mock.calls[0]?.[0] as {
+      execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal, onUpdate: undefined, context: ExtensionContext): Promise<{ content: { text: string }[]; details: Record<string, unknown> }>;
+    };
+
+    await expect(tool.execute("call-0", { action: "schedule", goal: "checks" }, new AbortController().signal, undefined, ctx))
+      .rejects.toThrow("requires a timing expression and non-empty goal");
+    (ctx as { hasUI: boolean }).hasUI = false;
+    await expect(tool.execute("call-no-ui", {
+      action: "schedule",
+      goal: "checks",
+      scheduleExpression: "every 5m",
+    }, new AbortController().signal, undefined, ctx)).rejects.toThrow("requires interactive confirmation");
+    (ctx as { hasUI: boolean }).hasUI = true;
+    await expect(tool.execute("call-1", {
+      action: "schedule",
+      goal: "checks",
+      scheduleExpression: "every 5m",
+    }, new AbortController().signal, undefined, ctx)).rejects.toThrow("Schedule creation cancelled");
+
+    ctx.ui.confirm = vi.fn(async () => true);
+    const created = await tool.execute("call-2", {
+      action: "schedule",
+      goal: "checks",
+      scheduleExpression: "every 5m",
+      verifierCommands: ["npm test"],
+      maxCycles: 2,
+      maxActiveMinutes: 3,
+    }, new AbortController().signal, undefined, ctx);
+    expect(created.content[0]?.text).toMatch(/^schedule_[0-9a-f]{8} created — every 5 minutes$/);
+    expect(created.details).toEqual(expect.objectContaining({
+      scheduleId: expect.stringMatching(/^schedule_[0-9a-f]{8}$/),
+      nextFireAt: expect.any(String),
+    }));
+    expect(ctx.ui.confirm).toHaveBeenCalledWith("Create Pi Loops schedule?", expect.stringContaining("Budget: 2 cycles / 3 active minutes"));
+  });
+
   it("normalizes and confirms schedules before persisting them", async () => {
     delete process.env.PI_LOOPS_CHILD;
     const { ctx, notifications } = await context();
@@ -136,6 +177,78 @@ describe("Pi extension registration", () => {
     await command.handler("status", ctx);
     expect(notifications.at(-1)?.message).toContain("Schedules:");
     expect(notifications.at(-1)?.message).toContain("run checks");
+  });
+
+  it("supports help, unsupported-command diagnostics, and confirmed schedule deletion", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx, notifications } = await context();
+    ctx.ui.confirm = vi.fn(async () => true);
+    const { api, registerCommand } = mockApi();
+    piLoopsExtension(api);
+    const command = registerCommand.mock.calls[0]?.[1] as { handler(args: string, context: ExtensionContext): Promise<void> };
+
+    await command.handler("help", ctx);
+    expect(notifications.at(-1)?.message).toContain("/loops schedule <time-expression> -- <goal>");
+    await command.handler("watch files", ctx);
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "warning", message: expect.stringContaining("planned for a later phase: watch") }));
+    await command.handler("goal", ctx);
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "error", message: "Usage: /loops goal <goal>" }));
+
+    await command.handler("schedule in 1h -- delete me", ctx);
+    const scheduleId = notifications.at(-1)?.message.match(/^schedule_[0-9a-f]{8}/)?.[0];
+    expect(scheduleId).toBeDefined();
+    await command.handler(`delete ${scheduleId}`, ctx);
+    expect(notifications.at(-1)?.message).toBe(`Deleted Pi Loops runtime data for ${scheduleId}.`);
+    await command.handler("status", ctx);
+    expect(notifications.at(-1)?.message).not.toContain("delete me");
+  });
+
+  it("resumes an interrupted goal through the public tool with a new budget epoch", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx } = await context();
+    const { api, registerTool, on, sendUserMessage } = mockApi();
+    piLoopsExtension(api);
+    const tool = registerTool.mock.calls[0]?.[0] as {
+      execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal, onUpdate: undefined, context: ExtensionContext): Promise<{ content: { text: string }[]; details: Record<string, unknown> }>;
+    };
+    const shutdown = on.mock.calls.find(([event]) => event === "session_shutdown")?.[1] as
+      ((_event: unknown, context: ExtensionContext) => Promise<void>) | undefined;
+    expect(shutdown).toBeTypeOf("function");
+
+    const started = await tool.execute("call-1", { action: "goal", goal: "resume safely" }, new AbortController().signal, undefined, ctx);
+    await shutdown?.({}, ctx);
+    const resumed = await tool.execute("call-2", {
+      action: "resume",
+      runId: started.details.runId,
+      guidance: "continue",
+      maxCycles: 2,
+      maxActiveMinutes: 1,
+    }, new AbortController().signal, undefined, ctx);
+
+    expect(resumed.content[0]?.text).toBe(`${started.details.runId} resumed`);
+    expect(resumed.details).toEqual(expect.objectContaining({ state: "running", cycle: 0 }));
+    expect(sendUserMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("runs startup diagnostics and ordered shutdown handlers", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx, notifications } = await context();
+    const mocked = mockApi();
+    mocked.getCommands.mockReturnValue([{ name: "loops" }, { name: "loops:2" }]);
+    piLoopsExtension(mocked.api);
+    const start = mocked.on.mock.calls.find(([event]) => event === "session_start")?.[1] as
+      ((_event: unknown, context: ExtensionContext) => Promise<void>) | undefined;
+    const shutdown = mocked.on.mock.calls.find(([event]) => event === "session_shutdown")?.[1] as
+      ((_event: unknown, context: ExtensionContext) => Promise<void>) | undefined;
+    expect(start).toBeTypeOf("function");
+    expect(shutdown).toBeTypeOf("function");
+
+    await start?.({}, ctx);
+    expect(notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({ level: "error", message: "Pi Loops tool registration is unavailable in this session." }),
+      expect.objectContaining({ level: "warning", message: expect.stringContaining("command collision detected") }),
+    ]));
+    await shutdown?.({}, ctx);
   });
 
   it("suppresses the outer controller in child worker mode", () => {

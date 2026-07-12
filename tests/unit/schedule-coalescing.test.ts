@@ -86,6 +86,14 @@ describe("schedule coalescing", () => {
     expect(reconciled.nextFireAt).toBeUndefined();
   });
 
+  it("rejects invalid occurrence identities and incoherent completion calls", () => {
+    const running = triggerSchedule(recurring(), "run_1234abcd", new Date("2026-07-12T12:05:00.000Z")).schedule;
+    expect(() => triggerSchedule(recurring(), "invalid", new Date("2026-07-12T12:05:00.000Z"))).toThrow("Invalid run ID");
+    expect(() => completeScheduleOccurrence(running, "run_deadbeef", new Date("2026-07-12T12:06:00.000Z"))).toThrow("not running occurrence");
+    const pending = triggerSchedule(running, "run_00000010", new Date("2026-07-12T12:10:00.000Z")).schedule;
+    expect(() => completeScheduleOccurrence(pending, "run_1234abcd", new Date("2026-07-12T12:11:00.000Z"))).toThrow("requires a replacement run ID");
+  });
+
   it("restores interrupted occurrences through the schedule domain transition", () => {
     const interrupted: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = recurring({ state: "paused", pauseReason: "interrupted" });
     delete interrupted.nextFireAt;
@@ -97,5 +105,14 @@ describe("schedule coalescing", () => {
       nextFireAt: "2026-07-12T12:10:00.000Z",
     }));
     expect(resumed.pauseReason).toBeUndefined();
+
+    const once: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = recurring({
+      state: "paused",
+      pauseReason: "interrupted",
+      timing: { kind: "once", fireAt: "2026-07-12T12:05:00.000Z" },
+    });
+    delete once.nextFireAt;
+    expect(resumeScheduleOccurrence(once, "run_deadbeef", new Date("2026-07-12T12:07:00.000Z")).nextFireAt).toBeUndefined();
+    expect(() => resumeScheduleOccurrence(recurring(), "run_deadbeef", new Date())).toThrow("not resumable");
   });
 });

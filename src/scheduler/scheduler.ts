@@ -197,14 +197,21 @@ export class ScheduleController {
   async resumeOccurrence(scheduleId: string, runId: string, cwd: string): Promise<void> {
     if (!isScheduleId(scheduleId)) throw new Error(`Invalid schedule ID: ${scheduleId}`);
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
+    const initialBinding = await resolveProjectBinding(cwd);
+    const localOccurrence = this.#active.get(scheduleId);
+    if (localOccurrence && this.#binding?.projectId === initialBinding.projectId) {
+      const schedule = await new ScheduleStore(this.#dataRoot, initialBinding.projectId).load(scheduleId);
+      if (schedule?.state === "paused" && schedule.pauseReason === "interrupted") {
+        await localOccurrence.promise;
+      }
+    }
     await this.#queue.run(async () => {
       const binding = await resolveProjectBinding(cwd);
       if (this.#binding?.projectId !== binding.projectId || !this.#runner || this.#stopping) {
         throw new Error("Schedule controller is not running for this project");
       }
       const run = await new RunStore(this.#dataRoot, binding.projectId).load(runId);
-      if (!run || run.mode !== "scheduled" || run.scheduleId !== scheduleId ||
-        !isResumableRun(run)) {
+      if (!run || run.mode !== "scheduled" || run.scheduleId !== scheduleId || !isResumableRun(run)) {
         throw new Error(`Scheduled run is not resumable: ${runId}`);
       }
       const claims = await this.#occurrenceClaims.acquire(binding, scheduleId);

@@ -22,9 +22,18 @@ function harness() {
 describe("child watchdog", () => {
   it("strictly parses a future absolute deadline", () => {
     expect(parseChildDeadline("2000", 1000)).toBe(2000);
+    for (const value of [undefined, "", " 2000", "+2000", "-2000", "2000.5", "1e9", "NaN", "Infinity", String(Number.MAX_SAFE_INTEGER + 1)]) {
+      expect(parseChildDeadline(value, 1000), String(value)).toBeUndefined();
+    }
     expect(parseChildDeadline("1000", 1000)).toBeUndefined();
-    expect(parseChildDeadline("1e9", 1000)).toBeUndefined();
-    expect(parseChildDeadline(undefined, 1000)).toBeUndefined();
+    expect(parseChildDeadline("999", 1000)).toBeUndefined();
+  });
+
+  it("rejects invalid graceful shutdown limits", () => {
+    const { pi } = harness();
+    for (const gracefulShutdownMs of [-1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => registerWorkerWatchdog(pi, { gracefulShutdownMs })).toThrow("non-negative safe integer");
+    }
   });
 
   it("fails closed when the deadline is missing", async () => {

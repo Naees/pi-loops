@@ -158,22 +158,19 @@ export class RpcWorkerManager {
     });
     try {
       const state = responseData(await client.request({ type: "get_state" }));
-      if (state.isStreaming !== false || typeof state.sessionId !== "string" || typeof state.sessionFile !== "string") {
+      if (state.isStreaming !== false || typeof state.sessionId !== "string" || state.sessionId.trim().length === 0 || typeof state.sessionFile !== "string") {
         throw new Error(`RPC worker handshake is invalid: ${JSON.stringify(state)}`);
       }
       if (!isAbsolute(state.sessionFile)) throw new Error("RPC worker reported a non-absolute session file");
       const reportedSessionFile = resolve(state.sessionFile);
       let sessionFile: string;
       try {
+        const metadata = await lstat(reportedSessionFile);
+        if (metadata.isSymbolicLink()) throw new Error("RPC worker session file escapes its managed session directory");
+        if (!metadata.isFile()) throw new Error("RPC worker session file must be a regular file");
         sessionFile = await realpath(reportedSessionFile);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        try {
-          await lstat(reportedSessionFile);
-          throw new Error("RPC worker reported an unresolved session-file symlink");
-        } catch (metadataError) {
-          if ((metadataError as NodeJS.ErrnoException).code !== "ENOENT") throw metadataError;
-        }
         sessionFile = join(await realpath(dirname(reportedSessionFile)), basename(reportedSessionFile));
       }
       assertManagedSessionFile(
