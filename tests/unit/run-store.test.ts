@@ -97,6 +97,32 @@ describe("run store", () => {
     await expect(runs.save({ ...run(1), latestEvaluation })).rejects.toThrow("invalid shape");
   });
 
+  it("validates unattended worker metadata and completed review commits", async () => {
+    const runs = await store();
+    const completed = run(1, "completed");
+    const scheduled: RunRecord = {
+      ...completed,
+      mode: "scheduled",
+      scheduleId: "schedule_1234abcd",
+      worker: {
+        repositoryRoot: "/tmp/repository",
+        baseCommit: "a".repeat(40),
+        branch: completed.runId.replace(/^/, "pi-loops/"),
+        worktreePath: "/tmp/worktree",
+        sessionDirectory: "/tmp/sessions",
+        reviewCommit: "b".repeat(40),
+        worktreeRetained: false,
+      },
+    };
+    const worker = scheduled.worker;
+    if (!worker) throw new Error("Scheduled test run has no worker metadata");
+    await expect(runs.save(scheduled)).resolves.toBeUndefined();
+    await expect(runs.save({ ...completed, worker })).rejects.toThrow("invalid shape");
+    const incompleteWorker: { -readonly [Key in keyof NonNullable<RunRecord["worker"]>]: NonNullable<RunRecord["worker"]>[Key] } = { ...worker };
+    delete incompleteWorker.reviewCommit;
+    await expect(runs.save({ ...scheduled, worker: incompleteWorker })).rejects.toThrow("invalid shape");
+  });
+
   it("evicts complete eligible records with no tombstone", async () => {
     const runs = await store();
     for (let index = 1; index <= 4; index += 1) await runs.save(run(index, "completed"));

@@ -70,6 +70,7 @@ export function formatContract(run: RunRecord, contract: CompletionContract): st
 }
 
 export function retentionEligible(run: RunRecord): boolean {
+  if (run.worker?.worktreeRetained) return false;
   return run.state === "completed" || run.state === "cancelled" || (run.state === "failed" && run.failureRecoverable === false);
 }
 

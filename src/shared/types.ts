@@ -21,6 +21,15 @@ export type RunState = (typeof RUN_STATES)[number];
 export const RUN_MODES = ["goal", "scheduled", "proactive"] as const;
 export type RunMode = (typeof RUN_MODES)[number];
 
+export const SCHEDULE_STATES = ["enabled", "running", "pending_coalesced", "paused"] as const;
+export type ScheduleState = (typeof SCHEDULE_STATES)[number];
+
+export type SchedulePauseReason = "completed" | "missed" | "interrupted" | "user";
+
+export type ScheduleTiming =
+  | { readonly kind: "once"; readonly fireAt: string }
+  | { readonly kind: "recurring"; readonly intervalMs: number; readonly anchorAt: string };
+
 export interface RunBudget {
   readonly maxActiveMs: number;
   readonly maxCycles: number;
@@ -61,6 +70,44 @@ export interface BudgetHistoryEntry {
   readonly reason: string;
 }
 
+export interface ScheduleRecord {
+  readonly schemaVersion: 1;
+  readonly scheduleId: string;
+  readonly projectId: string;
+  readonly projectRoot: string;
+  readonly state: ScheduleState;
+  readonly goal: string;
+  readonly constraints: readonly string[];
+  readonly verifierCommands: readonly string[];
+  readonly budget: RunBudget;
+  readonly expression: string;
+  readonly normalizedExpression: string;
+  readonly timing: ScheduleTiming;
+  readonly nextFireAt?: string;
+  readonly activeRunId?: string;
+  readonly pendingSince?: string;
+  readonly lastTriggeredAt?: string;
+  readonly lastCompletedAt?: string;
+  readonly pauseReason?: SchedulePauseReason;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface UnattendedWorkerRecord {
+  readonly repositoryRoot: string;
+  readonly baseCommit: string;
+  readonly branch: string;
+  readonly worktreePath: string;
+  readonly sessionDirectory: string;
+  readonly sessionId?: string;
+  readonly sessionFile?: string;
+  readonly childPid?: number;
+  readonly ownershipToken?: string;
+  readonly piVersion?: string;
+  readonly reviewCommit?: string;
+  readonly worktreeRetained: boolean;
+}
+
 export interface RunRecord {
   readonly schemaVersion: 1;
   readonly runId: string;
@@ -87,4 +134,5 @@ export interface RunRecord {
   readonly transitions: readonly RunTransition[];
   readonly terminalReason?: string;
   readonly failureRecoverable?: boolean;
+  readonly worker?: UnattendedWorkerRecord;
 }

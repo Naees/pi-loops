@@ -1,5 +1,5 @@
 import { readdir, readFile, rm, stat, utimes } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { canTransition, transitionRun } from "../controller/state-machine.js";
 import { isRunId, isScheduleId } from "../shared/ids.js";
 import { RUN_MODES, RUN_STATES, type RunRecord, type RunState } from "../shared/types.js";
@@ -80,6 +80,37 @@ function isStoredEvaluation(value: unknown): boolean {
   );
 }
 
+function isStoredWorker(value: unknown, runId: string): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "repositoryRoot",
+    "baseCommit",
+    "branch",
+    "worktreePath",
+    "sessionDirectory",
+    "sessionId",
+    "sessionFile",
+    "childPid",
+    "ownershipToken",
+    "piVersion",
+    "reviewCommit",
+    "worktreeRetained",
+  ])) return false;
+  return (
+    typeof value.repositoryRoot === "string" && isAbsolute(value.repositoryRoot) && Buffer.byteLength(value.repositoryRoot, "utf8") <= 16 * 1024 &&
+    typeof value.baseCommit === "string" && /^[0-9a-f]{40,64}$/.test(value.baseCommit) &&
+    value.branch === `pi-loops/${runId}` &&
+    typeof value.worktreePath === "string" && isAbsolute(value.worktreePath) && Buffer.byteLength(value.worktreePath, "utf8") <= 16 * 1024 &&
+    typeof value.sessionDirectory === "string" && isAbsolute(value.sessionDirectory) && Buffer.byteLength(value.sessionDirectory, "utf8") <= 16 * 1024 &&
+    (value.sessionId === undefined || (typeof value.sessionId === "string" && value.sessionId.length <= 128)) &&
+    (value.sessionFile === undefined || (typeof value.sessionFile === "string" && isAbsolute(value.sessionFile) && Buffer.byteLength(value.sessionFile, "utf8") <= 16 * 1024)) &&
+    (value.childPid === undefined || isPositiveSafeInteger(value.childPid)) &&
+    (value.ownershipToken === undefined || (typeof value.ownershipToken === "string" && value.ownershipToken.length <= 128)) &&
+    (value.piVersion === undefined || (typeof value.piVersion === "string" && value.piVersion.length <= 64)) &&
+    (value.reviewCommit === undefined || (typeof value.reviewCommit === "string" && /^[0-9a-f]{40,64}$/.test(value.reviewCommit))) &&
+    typeof value.worktreeRetained === "boolean"
+  );
+}
+
 function isBudget(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -149,6 +180,7 @@ function parseRunRecord(value: unknown): RunRecord {
       "transitions",
       "terminalReason",
       "failureRecoverable",
+      "worker",
     ]) ||
     value.schemaVersion !== 1 ||
     typeof value.runId !== "string" ||
@@ -193,7 +225,11 @@ function parseRunRecord(value: unknown): RunRecord {
     (value.terminalReason !== undefined && (typeof value.terminalReason !== "string" || value.terminalReason.trim().length === 0)) ||
     (value.failureRecoverable !== undefined && typeof value.failureRecoverable !== "boolean") ||
     (value.state === "failed" && (typeof value.failureRecoverable !== "boolean" || typeof value.terminalReason !== "string")) ||
-    (value.state !== "failed" && value.failureRecoverable !== undefined)
+    (value.state !== "failed" && value.failureRecoverable !== undefined) ||
+    (value.worker !== undefined && !isStoredWorker(value.worker, value.runId)) ||
+    (value.mode === "goal" && value.worker !== undefined) ||
+    (value.mode !== "goal" && value.state === "completed" &&
+      (!isRecord(value.worker) || value.worker.reviewCommit === undefined || value.worker.worktreeRetained !== false))
   ) {
     throw new Error("Run record has an invalid shape");
   }
