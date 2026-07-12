@@ -85,13 +85,16 @@ function recordVerifier(controller: AttendedGoalController, passed: boolean): vo
 }
 
 describe("attended goal controller", () => {
-  it("prevents overlapping writers through different directories in one Git repository", async () => {
+  it("prevents overlapping writers across Pi data roots and repository subdirectories", async () => {
     const { root, controller, host, project } = await harness();
     const initialized = spawnSync("git", ["init", "-q"], { cwd: project, encoding: "utf8", shell: false });
     if (initialized.status !== 0) throw new Error(initialized.stderr);
     const nested = join(project, "nested");
     await mkdir(nested);
-    const contender = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks") });
+    const contender = new AttendedGoalController({
+      dataRoot: join(root, "second-pi-data-root"),
+      repositoryLockRoot: join(root, "repository-locks"),
+    });
     const nestedHost: GoalLoopHost = { ...host, cwd: nested };
     const started = await controller.start({ goal: "first writer" }, host);
 

@@ -36,7 +36,7 @@ This boundary remains until the blockers below are resolved and a packed schedul
 
 ## Current validation
 
-- `npm run check`: passed (strict source/script typechecks; 188 tests).
+- `npm run check`: passed (strict source/script typechecks; 189 tests).
 - Five consecutive full-suite reruns: passed without flakes.
 - `npm run test:coverage`: passed (86.06% lines, 74.48% branches); coverage was used to target evaluator, RPC, UI, scheduler, and unattended gaps rather than as a release threshold.
 - `npm run test:packed`: passed; existing `/loops status` behavior restored.

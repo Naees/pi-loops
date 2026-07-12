@@ -135,6 +135,19 @@ describe("controller repository writer lock", () => {
     activeLocks.push(second);
   });
 
+  it("derives its global namespace independently of PI_CODING_AGENT_DIR", () => {
+    const original = process.env.PI_CODING_AGENT_DIR;
+    try {
+      process.env.PI_CODING_AGENT_DIR = "/tmp/pi-profile-a";
+      const first = resolveGlobalRepositoryLockRoot();
+      process.env.PI_CODING_AGENT_DIR = "/tmp/pi-profile-b";
+      expect(resolveGlobalRepositoryLockRoot()).toBe(first);
+    } finally {
+      if (original === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = original;
+    }
+  });
+
   it("coordinates repository writers across different Pi data roots", async () => {
     const { root, repositoryRoot, linkedWorktree } = await repository();
     const lockRoot = join(root, "user-global-locks");
@@ -175,15 +188,21 @@ describe("controller repository writer lock", () => {
 
   it("excludes a writer lock held by another process", async () => {
     const { root, repositoryRoot, linkedWorktree } = await repository();
-    const dataRoot = join(root, "data");
+    const lockRoot = join(root, "user-global-locks");
     const identity = await resolveRepositoryLockIdentity(repositoryRoot);
     if (identity.kind !== "git") throw new Error("Expected Git identity");
-    const path = repositoryWriterLeasePath(dataRoot, identity.commonGitDirectory);
+    const path = repositoryWriterLeasePath(lockRoot, identity.commonGitDirectory);
     await mkdir(dirname(path), { recursive: true });
     const child = spawn(process.execPath, [fixture, path], { stdio: ["pipe", "pipe", "pipe"] });
     try {
       await waitForReady(child);
-      await expect(acquireControllerWriterLock(dataRoot, await resolveProjectBinding(linkedWorktree), 30_000, new Date(), dataRoot))
+      await expect(acquireControllerWriterLock(
+        join(root, "different-pi-data-root"),
+        await resolveProjectBinding(linkedWorktree),
+        30_000,
+        new Date(),
+        lockRoot,
+      ))
         .rejects.toBeInstanceOf(LeaseUnavailableError);
     } finally {
       child.stdin.end();
