@@ -2,8 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { DEFAULT_CONFIG } from "../config/config.js";
-
-const CHILD_MARKER = "PI_LOOPS_CHILD";
+import { CHILD_MARKER_ENV, registerWorkerWatchdog } from "../worker/watchdog.js";
 
 function statusText(): string {
   return [
@@ -15,7 +14,8 @@ function statusText(): string {
 }
 
 export default function piLoopsExtension(pi: ExtensionAPI): void {
-  if (process.env[CHILD_MARKER]) {
+  if (process.env[CHILD_MARKER_ENV]) {
+    registerWorkerWatchdog(pi);
     return;
   }
 

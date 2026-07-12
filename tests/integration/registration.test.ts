@@ -16,13 +16,16 @@ function mockApi(): {
   api: ExtensionAPI;
   registerCommand: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
 } {
   const registerCommand = vi.fn();
   const registerTool = vi.fn();
+  const on = vi.fn();
   return {
-    api: { registerCommand, registerTool } as unknown as ExtensionAPI,
+    api: { registerCommand, registerTool, on } as unknown as ExtensionAPI,
     registerCommand,
     registerTool,
+    on,
   };
 }
 
@@ -39,11 +42,13 @@ describe("Pi extension registration", () => {
 
   it("suppresses the outer controller in child worker mode", () => {
     process.env.PI_LOOPS_CHILD = "run_1234abcd";
-    const { api, registerCommand, registerTool } = mockApi();
+    const { api, registerCommand, registerTool, on } = mockApi();
 
     piLoopsExtension(api);
 
     expect(registerCommand).not.toHaveBeenCalled();
     expect(registerTool).not.toHaveBeenCalled();
+    expect(on).toHaveBeenCalledWith("session_start", expect.any(Function));
+    expect(on).toHaveBeenCalledWith("session_shutdown", expect.any(Function));
   });
 });

@@ -1,13 +1,13 @@
 import type { RunRecord, RunState } from "../shared/types.js";
 
 const ALLOWED_TRANSITIONS: Readonly<Record<RunState, readonly RunState[]>> = {
-  configuring: ["preflight", "awaiting_user", "cancelled", "failed"],
-  preflight: ["queued", "starting", "awaiting_user", "cancelled", "failed"],
+  configuring: ["preflight", "awaiting_user", "cancelled", "interrupted", "failed"],
+  preflight: ["queued", "starting", "awaiting_user", "cancelled", "interrupted", "failed"],
   queued: ["starting", "cancelled", "interrupted", "failed"],
   starting: ["running", "cancelled", "interrupted", "failed"],
   running: ["verifying", "awaiting_user", "cancelled", "interrupted", "failed"],
-  verifying: ["evaluating", "running", "awaiting_user", "cancelled", "budget_exhausted", "stalled", "failed"],
-  evaluating: ["finalizing", "running", "awaiting_user", "cancelled", "budget_exhausted", "stalled", "failed"],
+  verifying: ["evaluating", "running", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "stalled", "failed"],
+  evaluating: ["finalizing", "running", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "stalled", "failed"],
   finalizing: ["completed", "awaiting_user", "cancelled", "interrupted", "failed"],
   awaiting_user: ["preflight", "running", "cancelled", "failed"],
   completed: [],

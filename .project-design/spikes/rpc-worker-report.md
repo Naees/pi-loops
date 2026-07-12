@@ -28,13 +28,15 @@ It set a unique `PI_LOOPS_CHILD` marker and sent `get_state` through stdin as JS
 - RPC process spawn: passed.
 - `get_state` request/response handshake: passed.
 - Child-mode extension suppression: loaded without registering the outer controller.
-- Closing RPC stdin after the handshake: child exited normally with status 0.
-- Shell interpolation: not used (`shell: false`).
+- A controlled 30-second RPC `bash` command was cancelled through `abort_bash` and reported `cancelled: true`.
+- A child with its RPC stdin deliberately left open reached its independent absolute deadline, requested Pi shutdown, and terminated itself after a one-second grace period (observed exit code 143).
+- Closing RPC stdin after the handshake and cancellation: child exited normally with status 0.
+- Shell interpolation for Pi process launch: not used (`shell: false`).
 - Task prompt in process arguments: no task prompt was present.
 
 ## What this proves
 
-The installed Pi CLI can be supervised as an attached RPC child on the development machine, and an idle child exits cleanly when its RPC input closes.
+The installed Pi CLI can be supervised as an attached RPC child on the development machine. RPC can abort a running controlled bash subprocess, and the child exits cleanly when its input closes afterward.
 
 ## What this does not prove
 
@@ -42,9 +44,9 @@ The mandatory Phase 0 spike remains incomplete until tests cover:
 
 - A real or controlled agent prompt and `agent_settled`.
 - RPC abort during model streaming.
-- RPC abort during a tool subprocess.
+- RPC `abort` during model streaming and model-initiated tool execution; direct `abort_bash` is now proven for a controlled RPC bash command.
 - Parent `SIGINT`, `SIGTERM`, and forced death.
-- Child-side absolute deadline after parent loss.
+- Abrupt parent-process death with an active model/tool run; the independent deadline itself is now proven while stdin remains open.
 - Descendant-process cleanup.
 - Session persistence and resume in the same worktree.
 - Permission/UI request relaying.
