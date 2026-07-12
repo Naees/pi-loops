@@ -122,6 +122,17 @@ export function scheduleLeasePath(dataRoot: string, projectId: string): string {
   return join(dataRoot, "projects", projectId, "schedule-store.lease.json");
 }
 
+export function scheduleExecutionLeasePath(dataRoot: string, projectId: string): string {
+  if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
+  return join(dataRoot, "projects", projectId, "schedule-execution.lease.json");
+}
+
+export function scheduleClaimLeasePath(dataRoot: string, projectId: string, scheduleId: string): string {
+  if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
+  if (!isScheduleId(scheduleId)) throw new Error(`Invalid schedule ID: ${scheduleId}`);
+  return join(dataRoot, "projects", projectId, "schedule-claims", `${scheduleId}.lease.json`);
+}
+
 export class ScheduleStore {
   readonly #projectId: string;
   readonly #directory: string;

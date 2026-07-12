@@ -9,7 +9,7 @@
 - Supported v1 expressions are `in <duration>`, `at HH:MM`, and `every <duration>`.
 - Recurrence is an absolute interval anchored at creation; recurring cadence is at least the configured five-minute minimum.
 - Missed occurrences are advanced/discarded at startup and never replayed.
-- One running plus one coalesced pending occurrence is the maximum per schedule.
+- One running plus one coalesced pending occurrence is the maximum per schedule. Long-lived cross-process occurrence and project-execution claims prevent live reconciliation and serialize scheduled writers across controllers.
 - One-off schedules remain persisted in `paused` state after completion or a missed occurrence; schedules are removed only through explicit deletion.
 - Schedule-definition mutation uses a short-lived per-project schedule lease. Repository execution acquires a hashed guard keyed by the canonical Git common directory before the existing project-store lease; non-Git attended work retains project-only locking.
 - Scheduled goals are treated as writers in v1; dirty or non-Git repositories pause in `awaiting_user` rather than attempting unsafe classification.

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createProjectId } from "../../src/shared/ids.js";
 import type { ScheduleRecord } from "../../src/shared/types.js";
 import { acquireWriterLease, releaseWriterLease, type WriterLease } from "../../src/storage/lease.js";
-import { ScheduleStore, scheduleLeasePath } from "../../src/storage/schedule-store.js";
+import { ScheduleStore, scheduleClaimLeasePath, scheduleLeasePath } from "../../src/storage/schedule-store.js";
 
 const temporaryDirectories: string[] = [];
 const activeLeases: WriterLease[] = [];
@@ -89,7 +89,8 @@ describe("schedule store", () => {
   });
 
   it("rejects invalid schedule IDs before path construction", async () => {
-    const { store } = await harness();
+    const { store, dataRoot, projectId } = await harness();
     await expect(store.load("schedule_../../escape")).rejects.toThrow("Invalid schedule ID");
+    expect(() => scheduleClaimLeasePath(dataRoot, projectId, "schedule_../../escape")).toThrow("Invalid schedule ID");
   });
 });
