@@ -93,3 +93,7 @@ export function isRecoverableState(state: RunState): boolean {
 export function isRecoverableRun(run: RunRecord): boolean {
   return isRecoverableState(run.state) || (run.state === "failed" && run.failureRecoverable === true);
 }
+
+export function isResumableRun(run: RunRecord): boolean {
+  return run.state === "awaiting_user" || isRecoverableRun(run);
+}

@@ -4,6 +4,7 @@ import { resolveProjectBinding, type ProjectBinding } from "../contracts/project
 import { CycleEvidenceCollector, requiredEvidencePassed } from "../evidence/collector.js";
 import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evaluator.js";
 import { recordRpcToolEvidence } from "../evidence/rpc-collector.js";
+import { errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunRecord, RunState, ScheduleRecord } from "../shared/types.js";
 import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
@@ -24,7 +25,7 @@ import { RpcWorkerManager, WorkerInteractionRequiredError, type WorkerCycleResul
 import { EMPTY_BUDGET_LEDGER, currentActiveMs, exhaustionReason, incrementCycle, pauseActiveTime, startActiveTime, type BudgetLedger } from "./budgets.js";
 import { abortableDelay, boundedRecordText, buildWorkMessage, deterministicFailureDecision } from "./attended-goal-support.js";
 import { EMPTY_PROGRESS_TRACKER, createFailureSignature, isStalled, recordFailure, type ProgressTracker } from "./no-progress.js";
-import { canTransition, isRecoverableRun, transitionRun } from "./state-machine.js";
+import { canTransition, isResumableRun, transitionRun } from "./state-machine.js";
 import type { ScheduleOccurrenceKind, ScheduleOccurrenceResult } from "../scheduler/scheduler.js";
 
 const WRITER_LEASE_STALE_MS = 30_000;
@@ -37,6 +38,17 @@ function processExists(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+function sameStringList(left: readonly string[] | undefined, right: readonly string[]): boolean {
+  const resolvedLeft = left ?? [];
+  return resolvedLeft.length === right.length && resolvedLeft.every((value, index) => value === right[index]);
+}
+
+function sameBudget(left: RunRecord["budget"], right: ScheduleRecord["budget"]): boolean {
+  return left.maxActiveMs === right.maxActiveMs &&
+    left.maxCycles === right.maxCycles &&
+    left.stallThreshold === right.stallThreshold;
 }
 
 interface WorktreeOperations {
@@ -132,72 +144,8 @@ export class UnattendedRunController {
       };
       writerLock.signal.addEventListener("abort", lockAbortHandler, { once: true });
       const store = new RunStore(this.#dataRoot, binding.projectId, writerLock.projectLease);
-      const existing = await store.load(runId);
-      if (kind === "start" && existing) throw new Error(`Scheduled run already exists: ${runId}`);
-      if (kind === "restart" && !existing) throw new Error(`Scheduled run does not exist: ${runId}`);
+      run = await this.#prepareRun(store, binding, schedule, runId, kind);
       const resuming = kind === "restart";
-      if (existing) {
-        const awaitingPreflightRetry = existing.state === "awaiting_user" && existing.worker === undefined;
-        const resumableWorker = existing.worker?.worktreeRetained === true && existing.worker.reviewCommit === undefined &&
-          Boolean(existing.worker.sessionFile && existing.worker.sessionId && existing.budgetDeadlineAt);
-        if (existing.mode !== "scheduled" || existing.scheduleId !== schedule.scheduleId ||
-          existing.goal !== schedule.goal || JSON.stringify(existing.constraints ?? []) !== JSON.stringify(schedule.constraints) ||
-          JSON.stringify(existing.verifierCommands ?? []) !== JSON.stringify(schedule.verifierCommands) ||
-          JSON.stringify(existing.budget) !== JSON.stringify(schedule.budget) ||
-          (!isRecoverableRun(existing) && existing.state !== "awaiting_user") ||
-          (!awaitingPreflightRetry && !resumableWorker)) {
-          throw new Error(`Scheduled run is not safely resumable: ${runId}`);
-        }
-        const resumeBase: { -readonly [Key in keyof RunRecord]: RunRecord[Key] } = { ...existing };
-        delete resumeBase.terminalReason;
-        delete resumeBase.failureRecoverable;
-        if (existing.state === "stalled" || existing.state === "budget_exhausted") {
-          resumeBase.budgetEpoch = (existing.budgetEpoch ?? 1) + 1;
-          resumeBase.budgetHistory = [
-            ...(existing.budgetHistory ?? []),
-            {
-              epoch: existing.budgetEpoch ?? 1,
-              budget: existing.budget,
-              cycles: existing.cycle,
-              activeMs: existing.activeMs ?? 0,
-              endedAt: this.#now().toISOString(),
-              reason: existing.terminalReason ?? existing.state,
-            },
-          ];
-          resumeBase.cycle = 0;
-          resumeBase.activeMs = 0;
-          resumeBase.equivalentFailures = 0;
-          delete resumeBase.progressSignature;
-          delete resumeBase.budgetDeadlineAt;
-        }
-        run = await this.#move(store, resumeBase, "preflight", "Scheduled run restart preflight started");
-      } else {
-        const createdAt = this.#now().toISOString();
-        run = {
-          schemaVersion: 1,
-          runId,
-          projectId: binding.projectId,
-          scheduleId: schedule.scheduleId,
-          mode: "scheduled",
-          state: "configuring",
-          goal: schedule.goal,
-          constraints: schedule.constraints,
-          verifierCommands: schedule.verifierCommands,
-          budget: schedule.budget,
-          budgetEpoch: 1,
-          budgetHistory: [],
-          cycle: 0,
-          totalCycles: 0,
-          activeMs: 0,
-          equivalentFailures: 0,
-          latestEvidence: [],
-          createdAt,
-          updatedAt: createdAt,
-          transitions: [],
-        };
-        await store.save(run);
-        run = await this.#move(store, run, "preflight", "Scheduled writer preflight started");
-      }
 
       let repository;
       try {
@@ -209,9 +157,7 @@ export class UnattendedRunController {
         await this.#worktrees.requireCleanRepository(repository.repositoryRoot, executionSignal);
       } catch (error) {
         if (error instanceof NonGitRepositoryError || error instanceof DirtyRepositoryError) {
-          run = await this.#move(store, run, "awaiting_user", error.message);
-          host.appendRunEntry(run);
-          host.notify(`${run.runId}: awaiting_user — ${error.message}`, "warning");
+          run = await this.#pauseForUser(store, run, error.message, host);
           return { status: "interrupted" };
         }
         throw error;
@@ -424,13 +370,11 @@ export class UnattendedRunController {
           return { status: "interrupted" };
         }
         if ((error instanceof WorktreeNeedsUserError || error instanceof WorkerInteractionRequiredError) && canTransition(run.state, "awaiting_user")) {
-          run = await this.#move(store, run, "awaiting_user", error.message);
-          host.appendRunEntry(run);
-          host.notify(`${run.runId}: awaiting_user — ${error.message}`, "warning");
+          run = await this.#pauseForUser(store, run, error.message, host);
           return { status: "interrupted" };
         }
         if (canTransition(run.state, "failed")) {
-          run = transitionRun(run, "failed", error instanceof Error ? error.message : String(error), this.#now(), { failureRecoverable: true });
+          run = transitionRun(run, "failed", errorMessage(error), this.#now(), { failureRecoverable: true });
           await store.save(run);
           host.appendRunEntry(run);
         }
@@ -449,6 +393,95 @@ export class UnattendedRunController {
     await this.#activeWorker?.stop();
   }
 
+  async #prepareRun(
+    store: RunStore,
+    binding: ProjectBinding,
+    schedule: ScheduleRecord,
+    runId: string,
+    kind: ScheduleOccurrenceKind,
+  ): Promise<RunRecord> {
+    const existing = await store.load(runId);
+    if (kind === "start") {
+      if (existing) throw new Error(`Scheduled run already exists: ${runId}`);
+      return this.#createRun(store, binding, schedule, runId);
+    }
+    if (!existing) throw new Error(`Scheduled run does not exist: ${runId}`);
+    if (!this.#isSafeRestart(existing, schedule)) {
+      throw new Error(`Scheduled run is not safely resumable: ${runId}`);
+    }
+
+    const resumed: { -readonly [Key in keyof RunRecord]: RunRecord[Key] } = { ...existing };
+    delete resumed.terminalReason;
+    delete resumed.failureRecoverable;
+    if (existing.state === "stalled" || existing.state === "budget_exhausted") {
+      resumed.budgetEpoch = (existing.budgetEpoch ?? 1) + 1;
+      resumed.budgetHistory = [
+        ...(existing.budgetHistory ?? []),
+        {
+          epoch: existing.budgetEpoch ?? 1,
+          budget: existing.budget,
+          cycles: existing.cycle,
+          activeMs: existing.activeMs ?? 0,
+          endedAt: this.#now().toISOString(),
+          reason: existing.terminalReason ?? existing.state,
+        },
+      ];
+      resumed.cycle = 0;
+      resumed.activeMs = 0;
+      resumed.equivalentFailures = 0;
+      delete resumed.progressSignature;
+      delete resumed.budgetDeadlineAt;
+    }
+    return this.#move(store, resumed, "preflight", "Scheduled run restart preflight started");
+  }
+
+  async #createRun(
+    store: RunStore,
+    binding: ProjectBinding,
+    schedule: ScheduleRecord,
+    runId: string,
+  ): Promise<RunRecord> {
+    const createdAt = this.#now().toISOString();
+    const created: RunRecord = {
+      schemaVersion: 1,
+      runId,
+      projectId: binding.projectId,
+      scheduleId: schedule.scheduleId,
+      mode: "scheduled",
+      state: "configuring",
+      goal: schedule.goal,
+      constraints: schedule.constraints,
+      verifierCommands: schedule.verifierCommands,
+      budget: schedule.budget,
+      budgetEpoch: 1,
+      budgetHistory: [],
+      cycle: 0,
+      totalCycles: 0,
+      activeMs: 0,
+      equivalentFailures: 0,
+      latestEvidence: [],
+      createdAt,
+      updatedAt: createdAt,
+      transitions: [],
+    };
+    await store.save(created);
+    return this.#move(store, created, "preflight", "Scheduled writer preflight started");
+  }
+
+  #isSafeRestart(run: RunRecord, schedule: ScheduleRecord): boolean {
+    const awaitingPreflightRetry = run.state === "awaiting_user" && run.worker === undefined;
+    const resumableWorker = run.worker?.worktreeRetained === true && run.worker.reviewCommit === undefined &&
+      Boolean(run.worker.sessionFile && run.worker.sessionId && run.budgetDeadlineAt);
+    return run.mode === "scheduled" &&
+      run.scheduleId === schedule.scheduleId &&
+      run.goal === schedule.goal &&
+      sameStringList(run.constraints, schedule.constraints) &&
+      sameStringList(run.verifierCommands, schedule.verifierCommands) &&
+      sameBudget(run.budget, schedule.budget) &&
+      isResumableRun(run) &&
+      (awaitingPreflightRetry || resumableWorker);
+  }
+
   async #waitForWriterLock(binding: ProjectBinding, signal: AbortSignal): Promise<ControllerWriterLock> {
     while (!signal.aborted) {
       try {
@@ -465,6 +498,13 @@ export class UnattendedRunController {
       }
     }
     throw new DOMException("Writer wait aborted", "AbortError");
+  }
+
+  async #pauseForUser(store: RunStore, run: RunRecord, reason: string, host: UnattendedRunHost): Promise<RunRecord> {
+    const paused = await this.#move(store, run, "awaiting_user", reason);
+    host.appendRunEntry(paused);
+    host.notify(`${paused.runId}: awaiting_user — ${reason}`, "warning");
+    return paused;
   }
 
   async #move(store: RunStore, run: RunRecord, state: RunState, reason: string): Promise<RunRecord> {

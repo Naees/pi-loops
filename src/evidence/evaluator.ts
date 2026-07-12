@@ -27,6 +27,18 @@ export interface CompletionEvaluator {
   evaluate(input: EvaluationInput, signal?: AbortSignal): Promise<EvaluationDecision>;
 }
 
+export function createDeterministicFailureDecision(
+  failedEvidence: readonly { readonly criterion: string; readonly summary: string }[],
+): EvaluationDecision {
+  return {
+    complete: false,
+    needsUser: false,
+    reason: "Required deterministic verification is failing or missing.",
+    failedCriteria: failedEvidence.map((evidence) => evidence.criterion),
+    feedback: failedEvidence.map((evidence) => `${evidence.criterion}: ${evidence.summary}`).join("\n"),
+  };
+}
+
 export class EvaluatorUnavailableError extends Error {
   constructor(message: string) {
     super(message);
@@ -123,15 +135,7 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
   async evaluate(input: EvaluationInput, signal?: AbortSignal): Promise<EvaluationDecision> {
     const boundedInput = boundedEvaluationInput(input);
     const deterministicFailures = boundedInput.verifierEvidence.filter((evidence) => !evidence.passed);
-    if (deterministicFailures.length > 0) {
-      return {
-        complete: false,
-        needsUser: false,
-        reason: "Required deterministic verification is failing or missing.",
-        failedCriteria: deterministicFailures.map((evidence) => evidence.criterion),
-        feedback: deterministicFailures.map((evidence) => `${evidence.criterion}: ${evidence.summary}`).join("\n"),
-      };
-    }
+    if (deterministicFailures.length > 0) return createDeterministicFailureDecision(deterministicFailures);
 
     const model = this.#context.model;
     if (!model) throw new EvaluatorUnavailableError("No Pi model is selected");

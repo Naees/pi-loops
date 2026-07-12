@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { asError } from "../shared/errors.ts";
 import { RpcJsonlDecoder } from "./rpc-jsonl.ts";
 
 export interface RpcWorkerClientOptions {
@@ -81,7 +82,7 @@ export class RpcWorkerClient {
       try {
         for (const value of decoder.push(chunk)) this.#handle(value);
       } catch (error) {
-        this.#fail(error instanceof Error ? error : new Error(String(error)));
+        this.#fail(asError(error));
       }
     });
     this.child.stdout.on("end", () => {
@@ -89,7 +90,7 @@ export class RpcWorkerClient {
       try {
         for (const value of decoder.finish()) this.#handle(value);
       } catch (error) {
-        this.#fail(error instanceof Error ? error : new Error(String(error)));
+        this.#fail(asError(error));
       }
     });
     this.child.stderr.on("data", (chunk: Buffer) => {
@@ -169,7 +170,7 @@ export class RpcWorkerClient {
         clearTimeout(timer);
         this.#pending.delete(id);
         signal?.removeEventListener("abort", onAbort);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reject(asError(error));
       }
     });
   }

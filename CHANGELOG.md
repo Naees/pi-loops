@@ -25,6 +25,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Consolidated attended-run initialization, UTF-8 record truncation, and npm package-boundary checks.
+- Separated extension command parsing and presentation, centralized record-file I/O and error normalization, and isolated scheduled restart preparation from execution.
 
 ### Fixed
 

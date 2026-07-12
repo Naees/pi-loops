@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { AttendedGoalController, type GoalLoopHost, type GoalResumeRequest, type GoalStartRequest } from "../controller/attended-goal-controller.js";
 import { resolveBudget } from "../controller/attended-goal-support.js";
-import { isRecoverableRun } from "../controller/state-machine.js";
+import { isResumableRun } from "../controller/state-machine.js";
 import { CurrentModelEvaluator } from "../evidence/evaluator.js";
 import { ScheduleController, type ScheduleCreateRequest } from "../scheduler/scheduler.js";
 import type { ScheduleRecord } from "../shared/types.js";
@@ -16,6 +16,9 @@ import type { RunRecord } from "../shared/types.js";
 import { NoticeStore } from "../storage/notices.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { CHILD_MARKER_ENV, registerWorkerWatchdog } from "../worker/watchdog.js";
+import { errorMessage } from "../shared/errors.js";
+import { budgetFromTool, parseCommand, parseResumeValue, parseScheduleValue } from "./commands.js";
+import { commandHelp, conciseRunEntry, formatScheduleStatus, lastAssistantText, toolResult } from "./presentation.js";
 
 const TOOL_ACTIONS = ["goal", "schedule", "status", "stop", "resume"] as const;
 
@@ -29,11 +32,12 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     return;
   }
 
-  const controller = new AttendedGoalController();
-  const scheduler = new ScheduleController();
-  const unattended = new UnattendedRunController();
+  const dataRoot = resolvePiLoopsDataRoot();
+  const controller = new AttendedGoalController({ dataRoot });
+  const scheduler = new ScheduleController({ dataRoot });
+  const unattended = new UnattendedRunController({ dataRoot });
   const ownExtensionPath = resolve(fileURLToPath(import.meta.url));
-  const noticeStore = new NoticeStore(resolvePiLoopsDataRoot());
+  const noticeStore = new NoticeStore(dataRoot);
   let subagentNoticeShownThisProcess = false;
 
   const host = (ctx: ExtensionContext): GoalLoopHost => ({
@@ -102,7 +106,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
 
   const storedRun = async (ctx: ExtensionContext, runId: string): Promise<RunRecord | undefined> => {
     const binding = await resolveProjectBinding(ctx.cwd);
-    return new RunStore(resolvePiLoopsDataRoot(), binding.projectId).load(runId);
+    return new RunStore(dataRoot, binding.projectId).load(runId);
   };
 
   const scheduledResumeCandidate = async (ctx: ExtensionContext, runId?: string): Promise<RunRecord | undefined> => {
@@ -111,11 +115,23 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
       return run?.mode === "scheduled" ? run : undefined;
     }
     const binding = await resolveProjectBinding(ctx.cwd);
-    const candidates = (await new RunStore(resolvePiLoopsDataRoot(), binding.projectId).list())
-      .filter((run) => (run.mode === "goal" || run.mode === "scheduled") && (isRecoverableRun(run) || run.state === "awaiting_user"))
+    const candidates = (await new RunStore(dataRoot, binding.projectId).list())
+      .filter((run) => (run.mode === "goal" || run.mode === "scheduled") && isResumableRun(run))
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     if (candidates.length > 1) throw new Error("Specify a run ID to resume");
     return candidates[0]?.mode === "scheduled" ? candidates[0] : undefined;
+  };
+
+  const combinedStatus = async (ctx: ExtensionContext, goalHost: GoalLoopHost): Promise<string> => {
+    const attended = await controller.status(goalHost);
+    const schedules = await scheduleStatus(ctx);
+    return schedules ? `${attended}\n${schedules}` : attended;
+  };
+
+  const stopWork = async (runId: string | undefined, ctx: ExtensionContext, goalHost: GoalLoopHost) => {
+    const scheduleId = await scheduler.stop(runId, ctx.cwd);
+    if (scheduleId) return { kind: "schedule" as const, scheduleId };
+    return { kind: "goal" as const, run: await controller.stop(runId, goalHost) };
   };
 
   const recommendSubagentsOnce = async (ctx: ExtensionContext): Promise<void> => {
@@ -129,8 +145,18 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
       );
       await noticeStore.markSubagentsRecommendationShown();
     } catch (error) {
-      ctx.ui.notify(`Could not persist the Pi Loops recommendation dismissal: ${error instanceof Error ? error.message : String(error)}`, "warning");
+      ctx.ui.notify(`Could not persist the Pi Loops recommendation dismissal: ${errorMessage(error)}`, "warning");
     }
+  };
+
+  const resumeWork = async (request: GoalResumeRequest, ctx: ExtensionContext, goalHost: GoalLoopHost) => {
+    await recommendSubagentsOnce(ctx);
+    const scheduled = await scheduledResumeCandidate(ctx, request.runId);
+    if (scheduled?.scheduleId) {
+      await scheduler.resumeOccurrence(scheduled.scheduleId, scheduled.runId, ctx.cwd);
+      return { kind: "schedule" as const, run: scheduled };
+    }
+    return { kind: "goal" as const, run: await controller.resume(request, goalHost) };
   };
 
   pi.registerCommand("loops", {
@@ -150,29 +176,15 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             ctx.ui.notify(`${schedule.scheduleId} created — ${schedule.normalizedExpression}`, "info");
             break;
           }
-          case "status": {
-            const attended = await controller.status(commandHost);
-            const schedules = await scheduleStatus(ctx);
-            ctx.ui.notify(schedules ? `${attended}\n${schedules}` : attended, "info");
+          case "status":
+            ctx.ui.notify(await combinedStatus(ctx, commandHost), "info");
             break;
-          }
-          case "stop": {
-            const id = parsed.value || undefined;
-            const stoppedSchedule = await scheduler.stop(id, ctx.cwd);
-            if (!stoppedSchedule) await controller.stop(id, commandHost);
+          case "stop":
+            await stopWork(parsed.value || undefined, ctx, commandHost);
             break;
-          }
-          case "resume": {
-            await recommendSubagentsOnce(ctx);
-            const request = parseResumeValue(parsed.value);
-            const run = await scheduledResumeCandidate(ctx, request.runId);
-            if (run?.scheduleId) {
-              await scheduler.resumeOccurrence(run.scheduleId, run.runId, ctx.cwd);
-            } else {
-              await controller.resume(request, commandHost);
-            }
+          case "resume":
+            await resumeWork(parseResumeValue(parsed.value), ctx, commandHost);
             break;
-          }
           case "clean": {
             const evicted = await controller.clean(commandHost);
             ctx.ui.notify(evicted.length === 0 ? "No terminal run records were eligible for cleanup." : `Deleted ${evicted.length} run record(s): ${evicted.join(", ")}`, "info");
@@ -207,7 +219,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             break;
         }
       } catch (error) {
-        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        ctx.ui.notify(errorMessage(error), "error");
       }
     },
   });
@@ -265,34 +277,29 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             terminate: true,
           };
         }
-        case "status": {
-          const attended = await controller.status(toolHost);
-          const schedules = await scheduleStatus(ctx);
+        case "status":
           return {
-            content: [{ type: "text", text: schedules ? `${attended}\n${schedules}` : attended }],
+            content: [{ type: "text", text: await combinedStatus(ctx, toolHost) }],
             details: { activeRunId: controller.activeRunId },
           };
-        }
         case "stop": {
-          const stoppedSchedule = await scheduler.stop(params.runId, ctx.cwd);
-          if (stoppedSchedule) return { content: [{ type: "text", text: `${stoppedSchedule} stopped` }], details: { scheduleId: stoppedSchedule }, terminate: true };
-          const stopped = await controller.stop(params.runId, toolHost);
-          return toolResult(stopped ? `${stopped.runId} cancelled` : "No goal loop is active", stopped);
+          const stopped = await stopWork(params.runId, ctx, toolHost);
+          if (stopped.kind === "schedule") {
+            return { content: [{ type: "text", text: `${stopped.scheduleId} stopped` }], details: { scheduleId: stopped.scheduleId }, terminate: true };
+          }
+          return toolResult(stopped.run ? `${stopped.run.runId} cancelled` : "No goal loop is active", stopped.run);
         }
         case "resume": {
-          await recommendSubagentsOnce(ctx);
           const request: GoalResumeRequest = {
             ...(params.runId === undefined ? {} : { runId: params.runId }),
             ...(params.guidance === undefined ? {} : { guidance: params.guidance }),
             ...budgetFromTool(params),
           };
-          const stored = await scheduledResumeCandidate(ctx, request.runId);
-          if (stored?.scheduleId) {
-            await scheduler.resumeOccurrence(stored.scheduleId, stored.runId, ctx.cwd);
-            return toolResult(`${stored.runId} scheduled restart requested`, stored);
-          }
-          const run = await controller.resume(request, toolHost);
-          return toolResult(`${run.runId} resumed`, run);
+          const resumed = await resumeWork(request, ctx, toolHost);
+          return toolResult(
+            resumed.kind === "schedule" ? `${resumed.run.runId} scheduled restart requested` : `${resumed.run.runId} resumed`,
+            resumed.run,
+          );
         }
       }
     },
@@ -321,7 +328,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(`${run.runId}: interrupted — recovered stale active state after startup`, "warning");
       }
     } catch (error) {
-      ctx.ui.notify(`Pi Loops startup reconciliation failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      ctx.ui.notify(`Pi Loops startup reconciliation failed: ${errorMessage(error)}`, "error");
     }
     try {
       await scheduler.start({ cwd: ctx.cwd, notify: (message, level) => ctx.ui.notify(message, level) },
@@ -334,7 +341,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
           kind,
         ));
     } catch (error) {
-      ctx.ui.notify(`Pi Loops scheduler startup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      ctx.ui.notify(`Pi Loops scheduler startup failed: ${errorMessage(error)}`, "error");
     }
   });
 
@@ -358,95 +365,4 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     await unattended.shutdown();
     await controller.interrupt(host(ctx));
   });
-}
-
-function parseCommand(args: string): { action: "goal" | "schedule" | "status" | "stop" | "resume" | "clean" | "delete" | "help" | "unsupported"; value: string } {
-  const trimmed = args.trim();
-  if (!trimmed) return { action: "status", value: "" };
-  const separator = trimmed.search(/\s/);
-  const action = (separator === -1 ? trimmed : trimmed.slice(0, separator)).toLowerCase();
-  const value = separator === -1 ? "" : trimmed.slice(separator + 1).trim();
-  if (action === "goal" || action === "schedule" || action === "status" || action === "stop" || action === "resume" || action === "clean" || action === "delete" || action === "help") {
-    if (action === "goal" && !value) throw new Error("Usage: /loops goal <goal>");
-    if (action === "schedule" && !value) throw new Error("Usage: /loops schedule <time-expression> -- <goal>");
-    return { action, value };
-  }
-  return { action: "unsupported", value: action };
-}
-
-function parseScheduleValue(value: string): ScheduleCreateRequest {
-  const separator = value.indexOf(" -- ");
-  if (separator <= 0) throw new Error("Usage: /loops schedule <time-expression> -- <goal>");
-  const expression = value.slice(0, separator).trim();
-  const goal = value.slice(separator + 4).trim();
-  if (!expression || !goal) throw new Error("Usage: /loops schedule <time-expression> -- <goal>");
-  return { expression, goal };
-}
-
-function parseResumeValue(value: string): GoalResumeRequest {
-  if (!value) return {};
-  const [first, ...rest] = value.split(/\s+/);
-  if (first?.startsWith("run_")) {
-    return { runId: first, ...(rest.length === 0 ? {} : { guidance: rest.join(" ") }) };
-  }
-  return { guidance: value };
-}
-
-function budgetFromTool(params: { maxCycles?: number; maxActiveMinutes?: number }): { budget?: Partial<RunRecord["budget"]> } {
-  const budget = {
-    ...(params.maxCycles === undefined ? {} : { maxCycles: params.maxCycles }),
-    ...(params.maxActiveMinutes === undefined ? {} : { maxActiveMs: params.maxActiveMinutes * 60_000 }),
-  };
-  return Object.keys(budget).length === 0 ? {} : { budget };
-}
-
-function conciseRunEntry(run: RunRecord): Record<string, unknown> {
-  return {
-    schemaVersion: 1,
-    runId: run.runId,
-    state: run.state,
-    cycle: run.cycle,
-    totalCycles: run.totalCycles ?? run.cycle,
-    updatedAt: run.updatedAt,
-  };
-}
-
-function lastAssistantText(ctx: ExtensionContext): string {
-  for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
-    if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-    const text = entry.message.content
-      .filter((block): block is { type: "text"; text: string } => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
-    if (text) return text;
-  }
-  return "The worker did not surface an assistant summary in this cycle.";
-}
-
-function toolResult(text: string, run: RunRecord | undefined) {
-  return {
-    content: [{ type: "text" as const, text }],
-    details: run ? conciseRunEntry(run) : {},
-    terminate: true,
-  };
-}
-
-function formatScheduleStatus(schedule: ScheduleRecord): string {
-  const pause = schedule.pauseReason ? `/${schedule.pauseReason}` : "";
-  const next = schedule.nextFireAt ? ` next ${schedule.nextFireAt}` : "";
-  const active = schedule.activeRunId ? ` active ${schedule.activeRunId}` : "";
-  return `${schedule.scheduleId}  ${schedule.state}${pause}  ${schedule.normalizedExpression}${next}${active} — ${schedule.goal}`;
-}
-
-function commandHelp(): string {
-  return [
-    "/loops goal <goal>",
-    "/loops schedule <time-expression> -- <goal>",
-    "/loops status",
-    "/loops stop [run-id]",
-    "/loops resume [run-id] [guidance]",
-    "/loops clean",
-    "/loops delete <run-id|schedule-id>",
-  ].join("\n");
 }

@@ -92,15 +92,15 @@ If only one run is resumable, `/loops resume` will not require its ID. If severa
 
 Attended goals may work in the current checkout.
 
-Scheduled and proactive writers will use an isolated Git worktree and a namespaced branch such as:
+Scheduled writers use an isolated Git worktree and a namespaced branch such as the following. Proactive writers will use the same boundary when Phase 3 is implemented:
 
 ```text
 pi-loops/run-a4f2
 ```
 
-Successful unattended work will be left on that branch for review. Pi Loops will never merge it automatically or modify the user's active branch during finalization.
+Successful unattended work is left on that branch for review. Pi Loops never merges it automatically or modifies the user's active branch during finalization.
 
-Unattended writing will pause when:
+Unattended writing pauses when:
 
 - The repository is not a Git repository.
 - The working tree is dirty.
@@ -110,7 +110,7 @@ Attended goals and read-only schedules can still operate in those cases.
 
 ## Process boundary
 
-For isolated unattended work, Pi Loops will start a narrowly scoped child Pi process in documented RPC mode. The child will:
+For isolated unattended work, Pi Loops starts a narrowly scoped child Pi process in documented RPC mode. The child:
 
 - Use the existing Pi installation and model configuration.
 - Run in the isolated worktree.
@@ -119,7 +119,7 @@ For isolated unattended work, Pi Loops will start a narrowly scoped child Pi pro
 - Stop when cancelled or when the parent Pi exits.
 - Be prevented from recursively launching another Pi Loops child.
 
-A mandatory implementation spike must prove cancellation, crash cleanup, resume, and no-orphan behavior before scheduled writing is considered complete.
+The macOS/Pi 0.80.6 lifecycle gate verifies cancellation, crash cleanup, resume, descendant cleanup, and repeated forced-parent-death behavior. Linux and Windows require equivalent native evidence in Phase 5 before either platform is enabled.
 
 ## Optional `pi-subagents`
 
@@ -226,7 +226,7 @@ Code will be reviewed and refactored between every phase rather than postponing 
 
 Pi packages execute with the user's system permissions. Review package source before installation.
 
-The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Scheduled child launch remains blocked until lifecycle validation proves no shell interpolation, bounded process output, and reliable descendant cleanup.
+The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Scheduled child launch is enabled only on the validated macOS/Pi 0.80.6 combination; other platforms remain fail-closed pending equivalent lifecycle evidence.
 
 Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. A comprehensive vulnerability and supply-chain assessment remains required before release.
 

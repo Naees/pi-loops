@@ -55,6 +55,11 @@ function futureDeadline(value: number): void {
   if (!Number.isSafeInteger(value) || value <= Date.now()) throw new Error("RPC worker requires a future absolute deadline");
 }
 
+function assertManagedSessionFile(sessionDirectory: string, sessionFile: string, message: string): void {
+  const relation = relative(sessionDirectory, sessionFile);
+  if (relation.startsWith("..") || isAbsolute(relation) || relation === "") throw new Error(message);
+}
+
 export class ManagedRpcWorker {
   readonly identity: WorkerIdentity;
   readonly #client: RpcWorkerClient;
@@ -123,10 +128,11 @@ export class RpcWorkerManager {
       const metadata = await lstat(spec.resume.sessionFile);
       if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("RPC worker resume session must be a regular non-symlink file");
       resumeSessionFile = await realpath(spec.resume.sessionFile);
-      const resumeRelation = relative(sessionDirectory, resumeSessionFile);
-      if (resumeRelation.startsWith("..") || isAbsolute(resumeRelation) || resumeRelation === "") {
-        throw new Error("RPC worker resume session file escapes its managed session directory");
-      }
+      assertManagedSessionFile(
+        sessionDirectory,
+        resumeSessionFile,
+        "RPC worker resume session file escapes its managed session directory",
+      );
     }
     const launch = await this.#resolveLaunch();
     if (launch.version !== SUPPORTED_PI_VERSION) {
@@ -170,14 +176,15 @@ export class RpcWorkerManager {
         }
         sessionFile = join(await realpath(dirname(reportedSessionFile)), basename(reportedSessionFile));
       }
-      const sessionRelation = relative(sessionDirectory, sessionFile);
-      if (sessionRelation.startsWith("..") || isAbsolute(sessionRelation) || sessionRelation === "") {
-        throw new Error("RPC worker session file escapes its managed session directory");
-      }
+      assertManagedSessionFile(
+        sessionDirectory,
+        sessionFile,
+        "RPC worker session file escapes its managed session directory",
+      );
       if (spec.resume && (sessionFile !== resumeSessionFile || state.sessionId !== spec.resume.sessionId)) {
         throw new Error("RPC worker resumed a different session identity");
       }
-      return new ManagedRpcWorker({ 
+      return new ManagedRpcWorker({
         pid: client.pid,
         ownershipToken,
         piVersion: launch.version,

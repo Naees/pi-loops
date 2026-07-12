@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
 import { sanitizedGitEnvironment } from "./git-environment.js";
 
@@ -208,7 +209,7 @@ export class GitWorktreeManager {
     try {
       await runGit(["commit", "-m", commitMessage], worktree.path, signal);
     } catch (error) {
-      throw new WorktreeNeedsUserError(error instanceof Error ? error.message : String(error));
+      throw new WorktreeNeedsUserError(errorMessage(error));
     }
     const commit = await runGit(["rev-parse", "HEAD"], worktree.path, signal);
     return { branch: worktree.branch, commit, worktreeRemoved: false };

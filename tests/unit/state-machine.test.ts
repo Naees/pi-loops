@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvalidRunTransitionError, canTransition, isRecoverableRun, isRecoverableState, isTerminalState, transitionRun } from "../../src/controller/state-machine.js";
+import { InvalidRunTransitionError, canTransition, isRecoverableRun, isRecoverableState, isResumableRun, isTerminalState, transitionRun } from "../../src/controller/state-machine.js";
 import { RUN_STATES, type RunRecord, type RunState } from "../../src/shared/types.js";
 
 const expectedTransitions: Readonly<Record<RunState, readonly RunState[]>> = {
@@ -75,6 +75,8 @@ describe("run state machine", () => {
     expect(isRecoverableState("budget_exhausted")).toBe(true);
     expect(isRecoverableState("failed")).toBe(false);
     expect(isRecoverableState("completed")).toBe(false);
+    expect(isResumableRun(run("awaiting_user"))).toBe(true);
+    expect(isResumableRun(run("completed"))).toBe(false);
   });
 
   it("requires failure recoverability to be explicit", () => {

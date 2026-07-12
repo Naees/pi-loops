@@ -1,4 +1,4 @@
-import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DEFAULT_CONFIG } from "../config/config.js";
 import { createProjectId, isProjectId, isRunId, isScheduleId } from "../shared/ids.js";
@@ -11,6 +11,7 @@ import {
 } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget } from "../shared/validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
+import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 
 const MAX_SCHEDULE_RECORD_BYTES = 1024 * 1024;
@@ -159,31 +160,21 @@ export class ScheduleStore {
   }
 
   async load(scheduleId: string): Promise<ScheduleRecord | undefined> {
-    const path = this.#path(scheduleId);
-    try {
-      const metadata = await stat(path);
-      if (metadata.size > MAX_SCHEDULE_RECORD_BYTES) throw new Error(`Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`);
-      const schedule = parseScheduleRecord(JSON.parse(await readFile(path, "utf8")) as unknown);
-      if (schedule.projectId !== this.#projectId) throw new Error("Stored schedule belongs to a different project");
-      return schedule;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
+    const value = await readBoundedJsonFile(
+      this.#path(scheduleId),
+      MAX_SCHEDULE_RECORD_BYTES,
+      `Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`,
+    );
+    if (value === undefined) return undefined;
+    const schedule = parseScheduleRecord(value);
+    if (schedule.projectId !== this.#projectId) throw new Error("Stored schedule belongs to a different project");
+    return schedule;
   }
 
   async list(): Promise<ScheduleRecord[]> {
-    let names: string[];
-    try {
-      names = await readdir(this.#directory);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
     const schedules: ScheduleRecord[] = [];
-    for (const name of names.sort()) {
-      if (!/^schedule_[0-9a-f]{8}\.json$/.test(name)) continue;
-      const schedule = await this.load(name.slice(0, -5));
+    for (const scheduleId of await listRecordIds(this.#directory, /^(schedule_[0-9a-f]{8})\.json$/)) {
+      const schedule = await this.load(scheduleId);
       if (schedule) schedules.push(schedule);
     }
     return schedules;

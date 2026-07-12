@@ -1,5 +1,5 @@
 import { isRunId } from "../shared/ids.js";
-import type { ScheduleRecord } from "../shared/types.js";
+import type { SchedulePauseReason, ScheduleRecord } from "../shared/types.js";
 import { nextRecurringFireAt } from "./parser.js";
 
 export type ScheduleTriggerDecision =
@@ -28,7 +28,7 @@ function advanceRecurring(schedule: ScheduleRecord, now: Date): string | undefin
 
 function pauseSchedule(
   schedule: ScheduleRecord,
-  reason: "completed" | "missed" | "interrupted" | "user",
+  reason: SchedulePauseReason,
   now: Date,
   lastCompletedAt?: string,
 ): ScheduleRecord {
@@ -131,4 +131,27 @@ export function interruptScheduleOccurrence(schedule: ScheduleRecord, runId: str
     throw new Error(`Schedule ${schedule.scheduleId} is not running occurrence ${runId}`);
   }
   return pauseSchedule(schedule, "interrupted", now);
+}
+
+export function resumeScheduleOccurrence(schedule: ScheduleRecord, runId: string, now: Date): ScheduleRecord {
+  if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
+  if (schedule.state !== "paused" || schedule.pauseReason !== "interrupted") {
+    throw new Error(`Schedule is not resumable: ${schedule.scheduleId}`);
+  }
+  const at = timestamp(now);
+  const mutable: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = {
+    ...schedule,
+    state: "running",
+    activeRunId: runId,
+    lastTriggeredAt: at,
+    updatedAt: at,
+  };
+  delete mutable.pauseReason;
+  delete mutable.pendingSince;
+  if (schedule.timing.kind === "recurring") {
+    mutable.nextFireAt = nextRecurringFireAt(schedule.timing.anchorAt, schedule.timing.intervalMs, now);
+  } else {
+    delete mutable.nextFireAt;
+  }
+  return mutable;
 }

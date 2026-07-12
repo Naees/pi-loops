@@ -4,6 +4,7 @@ import type { ScheduleRecord } from "../../src/shared/types.js";
 import {
   completeScheduleOccurrence,
   reconcileMissedSchedule,
+  resumeScheduleOccurrence,
   triggerSchedule,
 } from "../../src/scheduler/coalescing.js";
 
@@ -83,5 +84,18 @@ describe("schedule coalescing", () => {
     expect(reconciled).toEqual(expect.objectContaining({ state: "paused", pauseReason: "interrupted" }));
     expect(reconciled.activeRunId).toBeUndefined();
     expect(reconciled.nextFireAt).toBeUndefined();
+  });
+
+  it("restores interrupted occurrences through the schedule domain transition", () => {
+    const interrupted: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = recurring({ state: "paused", pauseReason: "interrupted" });
+    delete interrupted.nextFireAt;
+    const resumed = resumeScheduleOccurrence(interrupted, "run_1234abcd", new Date("2026-07-12T12:07:00.000Z"));
+    expect(resumed).toEqual(expect.objectContaining({
+      state: "running",
+      activeRunId: "run_1234abcd",
+      lastTriggeredAt: "2026-07-12T12:07:00.000Z",
+      nextFireAt: "2026-07-12T12:10:00.000Z",
+    }));
+    expect(resumed.pauseReason).toBeUndefined();
   });
 });

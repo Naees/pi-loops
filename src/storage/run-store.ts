@@ -1,10 +1,11 @@
-import { readdir, readFile, rm, stat, utimes } from "node:fs/promises";
+import { rm, stat, utimes } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { canTransition, transitionRun } from "../controller/state-machine.js";
 import { isProjectId, isRunId, isScheduleId } from "../shared/ids.js";
 import { RUN_MODES, RUN_STATES, type RunRecord, type RunState } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget, isStringArray } from "../shared/validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
+import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 import { selectRetentionEvictions } from "./retention.js";
 
@@ -251,32 +252,21 @@ export class RunStore {
   }
 
   async load(runId: string): Promise<RunRecord | undefined> {
-    const path = this.#path(runId);
-    try {
-      const metadata = await stat(path);
-      if (metadata.size > MAX_RUN_RECORD_BYTES) throw new Error(`Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`);
-      const run = parseRunRecord(JSON.parse(await readFile(path, "utf8")) as unknown);
-      if (run.projectId !== this.#projectId) throw new Error("Stored run belongs to a different project");
-      return run;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
+    const value = await readBoundedJsonFile(
+      this.#path(runId),
+      MAX_RUN_RECORD_BYTES,
+      `Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`,
+    );
+    if (value === undefined) return undefined;
+    const run = parseRunRecord(value);
+    if (run.projectId !== this.#projectId) throw new Error("Stored run belongs to a different project");
+    return run;
   }
 
   async list(): Promise<RunRecord[]> {
-    let names: string[];
-    try {
-      names = await readdir(this.#runsDirectory);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
-    }
-
     const runs: RunRecord[] = [];
-    for (const name of names.sort()) {
-      if (!/^run_[0-9a-f]{8}\.json$/.test(name)) continue;
-      const run = await this.load(name.slice(0, -5));
+    for (const runId of await listRecordIds(this.#runsDirectory, /^(run_[0-9a-f]{8})\.json$/)) {
+      const run = await this.load(runId);
       if (run) runs.push(run);
     }
     return runs;

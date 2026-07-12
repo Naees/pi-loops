@@ -4,17 +4,18 @@ import { inferProjectVerifierCommands } from "../contracts/project-inference.js"
 import { CycleEvidenceCollector, requiredEvidencePassed, type ObservedToolResult } from "../evidence/collector.js";
 import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evaluator.js";
 import { AsyncSerialQueue } from "../shared/async-queue.js";
+import { asError, errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunBudget, RunRecord, RunState } from "../shared/types.js";
 import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
-import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
+import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore, writerLeasePath } from "../storage/run-store.js";
 import { DEFAULT_CONFIG } from "../config/config.js";
 import { EMPTY_BUDGET_LEDGER, currentActiveMs, exhaustionReason, incrementCycle, pauseActiveTime, startActiveTime, type BudgetLedger } from "./budgets.js";
 import { EMPTY_PROGRESS_TRACKER, createFailureSignature, isStalled, recordFailure, type ProgressTracker } from "./no-progress.js";
 import { abortableDelay, buildWorkMessage, boundedRecordText, createUniqueRunId, deterministicFailureDecision, formatContract, formatRunStatus, resolveBudget, retentionEligible } from "./attended-goal-support.js";
-import { canTransition, isRecoverableRun, transitionRun } from "./state-machine.js";
+import { canTransition, isResumableRun, transitionRun } from "./state-machine.js";
 
 const WRITER_LEASE_STALE_MS = 30_000;
 
@@ -200,7 +201,7 @@ export class AttendedGoalController {
           );
         } catch (error) {
           if (active.stopRequested || generation !== this.#active?.generation) return;
-          await this.#fail(active, error instanceof Error ? error.message : String(error), true, host);
+          await this.#fail(active, errorMessage(error), true, host);
           return;
         }
       }
@@ -305,7 +306,7 @@ export class AttendedGoalController {
       try {
         await store.reconcileInterrupted(this.#now());
         const candidates = (await store.list())
-          .filter((run) => run.mode === "goal" && (isRecoverableRun(run) || run.state === "awaiting_user"))
+          .filter((run) => run.mode === "goal" && isResumableRun(run))
           .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
         let selected = request.runId === undefined ? undefined : candidates.find((run) => run.runId === request.runId);
         if (!selected && request.runId !== undefined) throw new Error(`Run is not resumable: ${request.runId}`);
@@ -376,45 +377,34 @@ export class AttendedGoalController {
   async reconcile(cwd: string): Promise<RunRecord[]> {
     if (this.#active) return [];
     return this.#queue.run(async () => {
-      let mutable: { lease: WriterLease; store: RunStore } | undefined;
       try {
-        mutable = await this.#openMutableStore(cwd);
-        const runIds = await mutable.store.reconcileInterrupted(this.#now());
-        const runs = await Promise.all(runIds.map((runId) => mutable?.store.load(runId)));
-        return runs.filter((run): run is RunRecord => run !== undefined);
+        return await this.#withMutableStore(cwd, async (store) => {
+          const runIds = await store.reconcileInterrupted(this.#now());
+          const runs = await Promise.all(runIds.map((runId) => store.load(runId)));
+          return runs.filter((run): run is RunRecord => run !== undefined);
+        });
       } catch (error) {
         if (error instanceof LeaseUnavailableError) return [];
         throw error;
-      } finally {
-        if (mutable) await releaseWriterLease(mutable.lease);
       }
     });
   }
 
   async clean(host: Pick<GoalLoopHost, "cwd">): Promise<string[]> {
-    return this.#queue.run(async () => {
-      const { lease, store } = await this.#openMutableStore(host.cwd);
-      try {
-        return await store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible);
-      } finally {
-        await releaseWriterLease(lease);
-      }
-    });
+    return this.#queue.run(async () => this.#withMutableStore(
+      host.cwd,
+      async (store) => store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible),
+    ));
   }
 
   async delete(runId: string, host: Pick<GoalLoopHost, "cwd">): Promise<void> {
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
     if (this.#active?.run.runId === runId) throw new Error(`Stop the active run before deleting it: ${runId}`);
 
-    await this.#queue.run(async () => {
-      const { lease, store } = await this.#openMutableStore(host.cwd);
-      try {
-        if ((await store.load(runId)) === undefined) throw new Error(`Run not found: ${runId}`);
-        await store.delete(runId);
-      } finally {
-        await releaseWriterLease(lease);
-      }
-    });
+    await this.#queue.run(async () => this.#withMutableStore(host.cwd, async (store) => {
+      if ((await store.load(runId)) === undefined) throw new Error(`Run not found: ${runId}`);
+      await store.delete(runId);
+    }));
   }
 
   async status(host: Pick<GoalLoopHost, "cwd">): Promise<string> {
@@ -435,15 +425,12 @@ export class AttendedGoalController {
       return;
     }
 
-    let lease: WriterLease | undefined;
     try {
-      lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
-      const store = new RunStore(this.#dataRoot, projectId, lease);
-      for (const runId of runIds) await store.markAccessed(runId, this.#now());
+      await this.#withMutableProjectStore(projectId, async (store) => {
+        for (const runId of runIds) await store.markAccessed(runId, this.#now());
+      });
     } catch (error) {
       if (!(error instanceof LeaseUnavailableError)) throw error;
-    } finally {
-      if (lease) await releaseWriterLease(lease);
     }
   }
 
@@ -464,13 +451,21 @@ export class AttendedGoalController {
         await abortableDelay(delayMs, signal);
       }
     }
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    throw asError(lastError);
   }
 
-  async #openMutableStore(cwd: string): Promise<{ lease: WriterLease; store: RunStore }> {
+  async #withMutableStore<T>(cwd: string, operation: (store: RunStore) => Promise<T>): Promise<T> {
     const { projectId } = await resolveProjectBinding(cwd);
+    return this.#withMutableProjectStore(projectId, operation);
+  }
+
+  async #withMutableProjectStore<T>(projectId: string, operation: (store: RunStore) => Promise<T>): Promise<T> {
     const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
-    return { lease, store: new RunStore(this.#dataRoot, projectId, lease) };
+    try {
+      return await operation(new RunStore(this.#dataRoot, projectId, lease));
+    } finally {
+      await releaseWriterLease(lease);
+    }
   }
 
   #createActiveGoal(contract: CompletionContract, store: RunStore, writerLock: ControllerWriterLock, run: RunRecord): ActiveGoal {
@@ -514,7 +509,7 @@ export class AttendedGoalController {
     const handleAbort = (): void => {
       if (!this.#beginWriterLockLoss(active, host, active.writerLock.signal.reason)) return;
       void this.#queue.run(async () => this.#close(active)).catch((error: unknown) => {
-        host.notify(`Repository writer lock cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+        host.notify(`Repository writer lock cleanup failed: ${errorMessage(error)}`, "error");
       });
     };
     active.lockAbortHandler = handleAbort;
@@ -528,7 +523,7 @@ export class AttendedGoalController {
     active.stopRequested = true;
     active.evaluatorAbort.abort(error);
     host.abortAgent();
-    host.notify(`Repository writer lock was lost: ${error instanceof Error ? error.message : String(error)}`, "error");
+    host.notify(`Repository writer lock was lost: ${errorMessage(error)}`, "error");
     return true;
   }
 
@@ -589,7 +584,7 @@ export class AttendedGoalController {
           if (this.#active?.generation !== active.generation) return;
           await this.#finish(active, "budget_exhausted", "Run exhausted its active_time budget", host);
         }).catch((error: unknown) => {
-          host.notify(error instanceof Error ? error.message : String(error), "error");
+          host.notify(errorMessage(error), "error");
         });
         return;
       }

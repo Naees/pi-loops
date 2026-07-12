@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG } from "../config/config.js";
 import { AsyncSerialQueue } from "../shared/async-queue.js";
+import { errorMessage } from "../shared/errors.js";
 import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
 import { createScheduleId, isRunId, isScheduleId } from "../shared/ids.js";
@@ -9,15 +10,16 @@ import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
 import { ScheduleStore, scheduleLeasePath } from "../storage/schedule-store.js";
 import { createUniqueRunId, resolveBudget } from "../controller/attended-goal-support.js";
-import { isRecoverableRun } from "../controller/state-machine.js";
+import { isResumableRun } from "../controller/state-machine.js";
 import {
   completeScheduleOccurrence,
   interruptScheduleOccurrence,
   reconcileMissedSchedule,
+  resumeScheduleOccurrence,
   triggerSchedule,
 } from "./coalescing.js";
 import { OccurrenceClaimManager, type OccurrenceClaims } from "./occurrence-claims.js";
-import { nextRecurringFireAt, parseScheduleExpression, type ParsedScheduleExpression } from "./parser.js";
+import { parseScheduleExpression, type ParsedScheduleExpression } from "./parser.js";
 
 const SCHEDULE_LEASE_STALE_MS = 30_000;
 const CLAIM_LEASE_STALE_MS = 30_000;
@@ -202,7 +204,7 @@ export class ScheduleController {
       }
       const run = await new RunStore(this.#dataRoot, binding.projectId).load(runId);
       if (!run || run.mode !== "scheduled" || run.scheduleId !== scheduleId ||
-        (!isRecoverableRun(run) && run.state !== "awaiting_user")) {
+        !isResumableRun(run)) {
         throw new Error(`Scheduled run is not resumable: ${runId}`);
       }
       const claims = await this.#occurrenceClaims.acquire(binding, scheduleId);
@@ -211,25 +213,9 @@ export class ScheduleController {
       try {
         await this.#withMutableStore(binding, async (store) => {
           const schedule = await store.load(scheduleId);
-          if (!schedule || schedule.state !== "paused" || schedule.pauseReason !== "interrupted") {
-            throw new Error(`Schedule is not resumable: ${scheduleId}`);
-          }
-          const mutable: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = {
-            ...schedule,
-            state: "running",
-            activeRunId: runId,
-            lastTriggeredAt: this.#now().toISOString(),
-            updatedAt: this.#now().toISOString(),
-          };
-          delete mutable.pauseReason;
-          delete mutable.pendingSince;
-          if (schedule.timing.kind === "recurring") {
-            mutable.nextFireAt = nextRecurringFireAt(schedule.timing.anchorAt, schedule.timing.intervalMs, this.#now());
-          } else {
-            delete mutable.nextFireAt;
-          }
-          resumed = mutable;
-          await store.save(mutable);
+          if (!schedule) throw new Error(`Schedule is not resumable: ${scheduleId}`);
+          resumed = resumeScheduleOccurrence(schedule, runId, this.#now());
+          await store.save(resumed);
         });
         if (!resumed) throw new Error(`Schedule could not be resumed: ${scheduleId}`);
         if (this.#beforeOccurrenceLaunch) await this.#beforeOccurrenceLaunch();
@@ -424,7 +410,7 @@ export class ScheduleController {
         } catch (error) {
           result = { status: "interrupted" };
           if (!claims.signal.aborted) {
-            this.#host?.notify(`${schedule.scheduleId}: scheduled occurrence failed — ${error instanceof Error ? error.message : String(error)}`, "error");
+            this.#host?.notify(`${schedule.scheduleId}: scheduled occurrence failed — ${errorMessage(error)}`, "error");
           }
         }
         if (!claims.signal.aborted) {
@@ -435,7 +421,7 @@ export class ScheduleController {
         if (!claimTransferred) {
           await this.#occurrenceClaims.release(claims).catch((error: unknown) => {
             if (!claims.signal.aborted) {
-              this.#host?.notify(`${schedule.scheduleId}: occurrence claim release failed — ${error instanceof Error ? error.message : String(error)}`, "error");
+              this.#host?.notify(`${schedule.scheduleId}: occurrence claim release failed — ${errorMessage(error)}`, "error");
             }
           });
         }
@@ -445,7 +431,7 @@ export class ScheduleController {
       this.#active.delete(schedule.scheduleId);
       if (!this.#stopping) {
         void this.#queue.run(async () => this.#processDue()).catch((error: unknown) => {
-          this.#host?.notify(`Pi Loops scheduler failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+          this.#host?.notify(`Pi Loops scheduler failed: ${errorMessage(error)}`, "error");
         });
       }
     });
@@ -522,7 +508,7 @@ export class ScheduleController {
         await this.#armNextTimer();
       } catch (error) {
         if (!transferred) throw error;
-        this.#host?.notify(`Pi Loops scheduler failed to arm after claim transfer: ${error instanceof Error ? error.message : String(error)}`, "error");
+        this.#host?.notify(`Pi Loops scheduler failed to arm after claim transfer: ${errorMessage(error)}`, "error");
       }
       return transferred;
     }
@@ -563,7 +549,7 @@ export class ScheduleController {
     try {
       await this.#queue.run(async () => this.#processDue());
     } catch (error) {
-      this.#host?.notify(`Pi Loops scheduler failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      this.#host?.notify(`Pi Loops scheduler failed: ${errorMessage(error)}`, "error");
       if (!this.#stopping) this.#scheduleTimer(LEASE_RETRY_MS);
     }
   }

@@ -1,5 +1,7 @@
 import { isRecord } from "../shared/validation.js";
 
+import { errorMessage } from "../shared/errors.js";
+
 const MAX_UI_TEXT_BYTES = 16 * 1024;
 const MAX_UI_OPTIONS = 100;
 
@@ -85,6 +87,6 @@ export async function relayWorkerUiRequest(
     }
     return { handled: false, reason: `Unsupported worker UI method: ${value.method}` };
   } catch (error) {
-    return { handled: false, reason: error instanceof Error ? error.message : String(error) };
+    return { handled: false, reason: errorMessage(error) };
   }
 }

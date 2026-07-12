@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, normalize } from "node:path";
+import { errorMessage } from "../shared/errors.js";
 
 const VERSION_TIMEOUT_MS = 5_000;
 const MAX_VERSION_OUTPUT_BYTES = 16 * 1024;
@@ -158,7 +159,7 @@ export async function resolveCurrentPiLaunchCommand(
       }
       return { ...canonical, version };
     } catch (error) {
-      failures.push(`${candidate.source}: ${error instanceof Error ? error.message : String(error)}`);
+      failures.push(`${candidate.source}: ${errorMessage(error)}`);
     }
   }
   throw new Error(`Could not validate the current Pi installation (${failures.join("; ")})`);

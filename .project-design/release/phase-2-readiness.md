@@ -21,7 +21,7 @@ Unattended scheduled writing is validated only on macOS with Pi 0.80.6. Linux an
 
 ## Validation
 
-- `npm run check`: passed (strict source/script typechecks; 194 tests).
+- `npm run check`: passed (strict source/script typechecks and the complete test suite).
 - `npm run test:coverage`: passed; coverage is used to target behavior rather than as a release threshold.
 - `npm run test:packed`: passed with the public extension loaded from the npm tarball.
 - `npm run test:e2e:scheduled:packed`: passed with real Git isolation, review-branch output, active-tree preservation, and worktree cleanup from the packed package.

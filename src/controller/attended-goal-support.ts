@@ -1,6 +1,6 @@
 import type { CompletionContract } from "../contracts/completion-contract.js";
 import type { VerifierEvidence } from "../evidence/collector.js";
-import type { EvaluationDecision } from "../evidence/evaluator.js";
+import { createDeterministicFailureDecision, type EvaluationDecision } from "../evidence/evaluator.js";
 import { DEFAULT_CONFIG } from "../config/config.js";
 import { createRunId } from "../shared/ids.js";
 import { truncateUtf8 } from "../shared/text.js";
@@ -45,13 +45,7 @@ export function boundedRecordText(value: string, maxBytes: number): string {
 
 export function deterministicFailureDecision(evidence: readonly VerifierEvidence[]): EvaluationDecision {
   const failed = evidence.filter((item) => !item.observed || !item.passed);
-  return {
-    complete: false,
-    needsUser: false,
-    reason: "Required deterministic verification is failing or missing.",
-    failedCriteria: failed.map((item) => item.criterion),
-    feedback: failed.map((item) => `${item.criterion}: ${item.summary}`).join("\n"),
-  };
+  return createDeterministicFailureDecision(failed);
 }
 
 export function buildWorkMessage(run: RunRecord, contract: CompletionContract, feedback: string | undefined): string {
