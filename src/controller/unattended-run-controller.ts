@@ -1,14 +1,15 @@
 import { join } from "node:path";
 import { createCompletionContract } from "../contracts/completion-contract.js";
-import { resolveProjectBinding } from "../contracts/project-binding.js";
+import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
 import { CycleEvidenceCollector, requiredEvidencePassed } from "../evidence/collector.js";
 import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evaluator.js";
 import { recordRpcToolEvidence } from "../evidence/rpc-collector.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunRecord, RunState, ScheduleRecord } from "../shared/types.js";
-import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
+import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
+import { LeaseUnavailableError } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
-import { RunStore, writerLeasePath } from "../storage/run-store.js";
+import { RunStore } from "../storage/run-store.js";
 import type { ParentWorkerUi } from "../ui/worker-ui-relay.js";
 import {
   GitWorktreeManager,
@@ -65,6 +66,7 @@ export class UnattendedRunController {
   readonly #now: () => Date;
   readonly #worktrees: WorktreeOperations;
   readonly #workers: WorkerManagerOperations;
+  readonly #writerLeaseStaleMs: number;
   #activeWorker: WorkerOperations | undefined;
   #activeRunId: string | undefined;
 
@@ -73,11 +75,16 @@ export class UnattendedRunController {
     now?: () => Date;
     worktrees?: WorktreeOperations;
     workers?: WorkerManagerOperations;
+    writerLeaseStaleMs?: number;
   } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
     this.#worktrees = options.worktrees ?? new GitWorktreeManager();
     this.#workers = options.workers ?? new RpcWorkerManager();
+    this.#writerLeaseStaleMs = options.writerLeaseStaleMs ?? WRITER_LEASE_STALE_MS;
+    if (!Number.isSafeInteger(this.#writerLeaseStaleMs) || this.#writerLeaseStaleMs < 2_000) {
+      throw new Error("Writer lease stale timeout must be a safe integer of at least 2000ms");
+    }
   }
 
   get activeRunId(): string | undefined {
@@ -98,13 +105,19 @@ export class UnattendedRunController {
       throw new Error("Schedule is bound to a different project");
     }
 
-    let lease: WriterLease | undefined;
+    let writerLock: ControllerWriterLock | undefined;
     let worker: WorkerOperations | undefined;
+    let lockAbortHandler: (() => void) | undefined;
     let run: RunRecord | undefined;
     let ledger: BudgetLedger = EMPTY_BUDGET_LEDGER;
     try {
-      lease = await this.#waitForWriterLease(binding.projectId, signal);
-      const store = new RunStore(this.#dataRoot, binding.projectId, lease);
+      writerLock = await this.#waitForWriterLock(binding, signal);
+      const executionSignal = AbortSignal.any([signal, writerLock.signal]);
+      lockAbortHandler = () => {
+        void worker?.stop().catch(() => undefined);
+      };
+      writerLock.signal.addEventListener("abort", lockAbortHandler, { once: true });
+      const store = new RunStore(this.#dataRoot, binding.projectId, writerLock.projectLease);
       const createdAt = this.#now().toISOString();
       run = {
         schemaVersion: 1,
@@ -133,8 +146,12 @@ export class UnattendedRunController {
 
       let repository;
       try {
-        repository = await this.#worktrees.inspectRepository(binding.projectRoot, signal);
-        await this.#worktrees.requireCleanRepository(repository.repositoryRoot, signal);
+        repository = await this.#worktrees.inspectRepository(binding.projectRoot, executionSignal);
+        if (writerLock.identity.kind !== "git" || repository.commonGitDirectory !== writerLock.identity.commonGitDirectory) {
+          throw new Error("Locked repository identity does not match scheduled worktree identity");
+        }
+        await assertControllerWriterLock(writerLock);
+        await this.#worktrees.requireCleanRepository(repository.repositoryRoot, executionSignal);
       } catch (error) {
         if (error instanceof NonGitRepositoryError || error instanceof DirtyRepositoryError) {
           run = await this.#move(store, run, "awaiting_user", error.message);
@@ -146,7 +163,8 @@ export class UnattendedRunController {
       }
 
       const managedRoot = join(this.#dataRoot, "projects", binding.projectId, "worktrees");
-      const worktree = await this.#worktrees.create(runId, repository, managedRoot, signal);
+      await assertControllerWriterLock(writerLock);
+      const worktree = await this.#worktrees.create(runId, repository, managedRoot, executionSignal);
       const sessionDirectory = join(this.#dataRoot, "projects", binding.projectId, "sessions", runId);
       run = {
         ...run,
@@ -163,6 +181,7 @@ export class UnattendedRunController {
       run = await this.#move(store, run, "starting", "Isolated scheduled worker is starting");
 
       const deadlineMs = this.#now().getTime() + run.budget.maxActiveMs;
+      await assertControllerWriterLock(writerLock);
       worker = await this.#workers.launch({ runId, cwd: worktree.path, sessionDirectory, absoluteDeadlineMs: deadlineMs }, host.ui);
       this.#activeWorker = worker;
       this.#activeRunId = runId;
@@ -188,9 +207,10 @@ export class UnattendedRunController {
       let progress: ProgressTracker = EMPTY_PROGRESS_TRACKER;
       let feedback: string | undefined;
 
-      while (!signal.aborted) {
+      while (!executionSignal.aborted) {
         const collector = new CycleEvidenceCollector();
-        const cycleResult = await runningWorker.runCycle(buildWorkMessage(run as RunRecord, contract, feedback), signal);
+        await assertControllerWriterLock(writerLock);
+        const cycleResult = await runningWorker.runCycle(buildWorkMessage(run as RunRecord, contract, feedback), executionSignal);
         for (const event of cycleResult.events) recordRpcToolEvidence(collector, event);
         ledger = incrementCycle(ledger);
         run = {
@@ -216,7 +236,7 @@ export class UnattendedRunController {
             workerSummary: cycleResult.lastAssistantText ?? "",
             verifierEvidence: evidence.map((item) => ({ criterion: item.criterion, passed: item.passed, summary: item.summary })),
             ...(run.latestEvaluation?.feedback ? { previousFeedback: run.latestEvaluation.feedback } : {}),
-          }, signal);
+          }, executionSignal);
         }
         run = { ...run, latestEvaluation: decision };
         await store.save(run);
@@ -227,7 +247,8 @@ export class UnattendedRunController {
           await runningWorker.stop();
           worker = undefined;
           this.#activeWorker = undefined;
-          const finalized = await this.#worktrees.commitReview(worktree, `Pi Loops ${run.runId}: ${run.goal}`, signal);
+          await assertControllerWriterLock(writerLock);
+          const finalized = await this.#worktrees.commitReview(worktree, `Pi Loops ${run.runId}: ${run.goal}`, executionSignal);
           run = {
             ...run,
             worker: {
@@ -237,7 +258,8 @@ export class UnattendedRunController {
             },
           };
           await store.save(run);
-          await this.#worktrees.removeClean(worktree, signal);
+          await assertControllerWriterLock(writerLock);
+          await this.#worktrees.removeClean(worktree, executionSignal);
           run = {
             ...run,
             worker: {
@@ -286,8 +308,12 @@ export class UnattendedRunController {
       }
       return { status: "interrupted" };
     } catch (error) {
-      if (run && lease) {
-        const store = new RunStore(this.#dataRoot, run.projectId, lease);
+      if (writerLock?.signal.aborted) {
+        const reason = writerLock.signal.reason;
+        throw reason instanceof Error ? reason : new Error("Repository writer lock was lost");
+      }
+      if (run && writerLock) {
+        const store = new RunStore(this.#dataRoot, run.projectId, writerLock.projectLease);
         if (signal.aborted && canTransition(run.state, "interrupted")) {
           const paused = ledger.activeSinceMs === undefined ? ledger : pauseActiveTime(ledger, this.#now().getTime());
           run = transitionRun({ ...run, activeMs: paused.activeMs, cycle: paused.cycles }, "interrupted", "Scheduled worker was cancelled", this.#now());
@@ -310,10 +336,11 @@ export class UnattendedRunController {
       }
       throw error;
     } finally {
+      if (writerLock && lockAbortHandler) writerLock.signal.removeEventListener("abort", lockAbortHandler);
       if (worker) await worker.stop().catch(() => undefined);
       this.#activeWorker = undefined;
       this.#activeRunId = undefined;
-      if (lease) await releaseWriterLease(lease).catch(() => undefined);
+      if (writerLock) await releaseControllerWriterLock(writerLock).catch(() => undefined);
     }
   }
 
@@ -321,10 +348,10 @@ export class UnattendedRunController {
     await this.#activeWorker?.stop();
   }
 
-  async #waitForWriterLease(projectId: string, signal: AbortSignal): Promise<WriterLease> {
+  async #waitForWriterLock(binding: ProjectBinding, signal: AbortSignal): Promise<ControllerWriterLock> {
     while (!signal.aborted) {
       try {
-        return await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
+        return await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now());
       } catch (error) {
         if (!(error instanceof LeaseUnavailableError)) throw error;
         await abortableDelay(WRITER_RETRY_MS, signal, "Writer wait aborted");

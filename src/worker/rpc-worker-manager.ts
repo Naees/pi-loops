@@ -6,6 +6,7 @@ import type { ParentWorkerUi } from "../ui/worker-ui-relay.js";
 import { relayWorkerUiRequest } from "../ui/worker-ui-relay.js";
 import { resolveCurrentPiLaunchCommand, type PiLaunchCommand } from "./pi-executable.js";
 import { RpcWorkerClient, type RpcEnvelope } from "./rpc-client.js";
+import { sanitizedGitEnvironment } from "./git-environment.js";
 import { CHILD_DEADLINE_ENV, CHILD_MARKER_ENV } from "./watchdog.js";
 
 const SUPPORTED_PI_VERSION = "0.80.6";
@@ -130,7 +131,7 @@ export class RpcWorkerManager {
       args,
       cwd,
       environment: {
-        ...process.env,
+        ...sanitizedGitEnvironment(),
         [CHILD_MARKER_ENV]: ownershipToken,
         [CHILD_DEADLINE_ENV]: String(spec.absoluteDeadlineMs),
       },

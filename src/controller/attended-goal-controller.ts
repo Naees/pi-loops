@@ -6,6 +6,7 @@ import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evalua
 import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunBudget, RunRecord, RunState } from "../shared/types.js";
+import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
 import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore, writerLeasePath } from "../storage/run-store.js";
@@ -44,13 +45,15 @@ interface ActiveGoal {
   readonly generation: number;
   readonly contract: CompletionContract;
   readonly store: RunStore;
-  readonly lease: WriterLease;
+  readonly writerLock: ControllerWriterLock;
   readonly collector: CycleEvidenceCollector;
   readonly evaluatorAbort: AbortController;
   run: RunRecord;
   ledger: BudgetLedger;
   progress: ProgressTracker;
   stopRequested: boolean;
+  lockLossHandled: boolean;
+  lockAbortHandler: (() => void) | undefined;
   deadlineTimer: NodeJS.Timeout | undefined;
 }
 
@@ -58,14 +61,19 @@ export class AttendedGoalController {
   readonly #dataRoot: string;
   readonly #now: () => Date;
   readonly #evaluatorRetryDelaysMs: readonly number[];
+  readonly #writerLeaseStaleMs: number;
   #active: ActiveGoal | undefined;
   #generation = 0;
   readonly #queue = new AsyncSerialQueue();
 
-  constructor(options: { dataRoot?: string; now?: () => Date; evaluatorRetryDelaysMs?: readonly number[] } = {}) {
+  constructor(options: { dataRoot?: string; now?: () => Date; evaluatorRetryDelaysMs?: readonly number[]; writerLeaseStaleMs?: number } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
     this.#evaluatorRetryDelaysMs = options.evaluatorRetryDelaysMs ?? [250, 1_000];
+    this.#writerLeaseStaleMs = options.writerLeaseStaleMs ?? WRITER_LEASE_STALE_MS;
+    if (!Number.isSafeInteger(this.#writerLeaseStaleMs) || this.#writerLeaseStaleMs < 2_000) {
+      throw new Error("Writer lease stale timeout must be a safe integer of at least 2000ms");
+    }
     if (this.#evaluatorRetryDelaysMs.some((delay) => !Number.isSafeInteger(delay) || delay < 0)) {
       throw new Error("Evaluator retry delays must be non-negative safe integers");
     }
@@ -83,9 +91,10 @@ export class AttendedGoalController {
     return this.#queue.run(async () => {
       if (this.#active) throw new Error(`A goal loop is already active: ${this.#active.run.runId}`);
 
-      const { projectRoot, projectId } = await resolveProjectBinding(host.cwd);
-      const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
-      const store = new RunStore(this.#dataRoot, projectId, lease);
+      const binding = await resolveProjectBinding(host.cwd);
+      const { projectRoot, projectId } = binding;
+      const writerLock = await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now());
+      const store = new RunStore(this.#dataRoot, projectId, writerLock.projectLease);
 
       try {
         await store.reconcileInterrupted(this.#now());
@@ -123,15 +132,18 @@ export class AttendedGoalController {
         run = transitionRun(run, "running", "First attended work cycle started", this.#now());
         await store.save(run);
 
-        const active = this.#createActiveGoal(contract, store, lease, run);
+        await assertControllerWriterLock(writerLock);
+        const active = this.#createActiveGoal(contract, store, writerLock, run);
         this.#active = active;
+        this.#watchWriterLock(active, host);
+        await assertControllerWriterLock(writerLock);
         this.#armDeadline(active, host);
         host.appendRunEntry(run);
         host.notify(formatContract(run, contract), "info");
         host.sendWork(buildWorkMessage(active.run, active.contract, undefined), host.isIdle ? "immediate" : "followUp");
         return run;
       } catch (error) {
-        await this.#discardFailedActivation(lease);
+        await this.#discardFailedActivation(writerLock);
         throw error;
       }
     });
@@ -141,6 +153,7 @@ export class AttendedGoalController {
     await this.#queue.run(async () => {
       const active = this.#active;
       if (!active || active.run.state !== "running" || active.stopRequested) return;
+      if (!(await this.#ensureWriterLock(active, host))) return;
       const generation = active.generation;
 
       active.ledger = incrementCycle(active.ledger);
@@ -229,6 +242,7 @@ export class AttendedGoalController {
         await this.#move(active, "running", "Evaluator requested another work cycle");
       }
       active.collector.reset();
+      if (!(await this.#ensureWriterLock(active, host))) return;
       host.appendRunEntry(active.run);
       host.notify(`${active.run.runId}: cycle ${active.run.cycle} incomplete — ${decision.reason}`, "warning");
       host.sendWork(buildWorkMessage(active.run, active.contract, decision.feedback ?? decision.reason), "immediate");
@@ -275,9 +289,10 @@ export class AttendedGoalController {
       if (this.#active) throw new Error(`A goal loop is already active: ${this.#active.run.runId}`);
       if (request.runId !== undefined && !isRunId(request.runId)) throw new Error(`Invalid run ID: ${request.runId}`);
 
-      const { projectId } = await resolveProjectBinding(host.cwd);
-      const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
-      const store = new RunStore(this.#dataRoot, projectId, lease);
+      const binding = await resolveProjectBinding(host.cwd);
+      const { projectId } = binding;
+      const writerLock = await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now());
+      const store = new RunStore(this.#dataRoot, projectId, writerLock.projectLease);
 
       try {
         await store.reconcileInterrupted(this.#now());
@@ -333,15 +348,18 @@ export class AttendedGoalController {
         await store.save(run);
 
         const contract = createCompletionContract(run.goal, run.verifierCommands, run.constraints);
-        const active = this.#createActiveGoal(contract, store, lease, run);
+        await assertControllerWriterLock(writerLock);
+        const active = this.#createActiveGoal(contract, store, writerLock, run);
         this.#active = active;
+        this.#watchWriterLock(active, host);
+        await assertControllerWriterLock(writerLock);
         this.#armDeadline(active, host);
         host.appendRunEntry(run);
         host.notify(`${run.runId} resumed with budget epoch ${run.budgetEpoch}`, "info");
         host.sendWork(buildWorkMessage(active.run, active.contract, request.guidance ?? run.latestEvaluation?.feedback ?? undefined), host.isIdle ? "immediate" : "followUp");
         return run;
       } catch (error) {
-        await this.#discardFailedActivation(lease);
+        await this.#discardFailedActivation(writerLock);
         throw error;
       }
     });
@@ -447,29 +465,63 @@ export class AttendedGoalController {
     return { lease, store: new RunStore(this.#dataRoot, projectId, lease) };
   }
 
-  #createActiveGoal(contract: CompletionContract, store: RunStore, lease: WriterLease, run: RunRecord): ActiveGoal {
+  #createActiveGoal(contract: CompletionContract, store: RunStore, writerLock: ControllerWriterLock, run: RunRecord): ActiveGoal {
     return {
       generation: ++this.#generation,
       contract,
       store,
-      lease,
+      writerLock,
       collector: new CycleEvidenceCollector(),
       evaluatorAbort: new AbortController(),
       run,
       ledger: startActiveTime(EMPTY_BUDGET_LEDGER, this.#now().getTime()),
       progress: EMPTY_PROGRESS_TRACKER,
       stopRequested: false,
+      lockLossHandled: false,
+      lockAbortHandler: undefined,
       deadlineTimer: undefined,
     };
   }
 
-  async #discardFailedActivation(lease: WriterLease): Promise<void> {
-    const active = this.#active?.lease === lease ? this.#active : undefined;
+  async #discardFailedActivation(writerLock: ControllerWriterLock): Promise<void> {
+    const active = this.#active?.writerLock === writerLock ? this.#active : undefined;
     if (active) {
       await this.#close(active).catch(() => undefined);
       return;
     }
-    await releaseWriterLease(lease).catch(() => undefined);
+    await releaseControllerWriterLock(writerLock).catch(() => undefined);
+  }
+
+  async #ensureWriterLock(active: ActiveGoal, host: GoalLoopHost): Promise<boolean> {
+    try {
+      await assertControllerWriterLock(active.writerLock);
+      return true;
+    } catch (error) {
+      if (this.#beginWriterLockLoss(active, host, error)) await this.#close(active).catch(() => undefined);
+      return false;
+    }
+  }
+
+  #watchWriterLock(active: ActiveGoal, host: GoalLoopHost): void {
+    const handleAbort = (): void => {
+      if (!this.#beginWriterLockLoss(active, host, active.writerLock.signal.reason)) return;
+      void this.#queue.run(async () => this.#close(active)).catch((error: unknown) => {
+        host.notify(`Repository writer lock cleanup failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      });
+    };
+    active.lockAbortHandler = handleAbort;
+    active.writerLock.signal.addEventListener("abort", handleAbort, { once: true });
+    if (active.writerLock.signal.aborted) handleAbort();
+  }
+
+  #beginWriterLockLoss(active: ActiveGoal, host: GoalLoopHost, error: unknown): boolean {
+    if (active.lockLossHandled || this.#active?.generation !== active.generation) return false;
+    active.lockLossHandled = true;
+    active.stopRequested = true;
+    active.evaluatorAbort.abort(error);
+    host.abortAgent();
+    host.notify(`Repository writer lock was lost: ${error instanceof Error ? error.message : String(error)}`, "error");
+    return true;
   }
 
   async #move(active: ActiveGoal, to: RunState, reason: string): Promise<void> {
@@ -506,10 +558,12 @@ export class AttendedGoalController {
   }
 
   async #close(active: ActiveGoal): Promise<void> {
+    if (active.lockAbortHandler) active.writerLock.signal.removeEventListener("abort", active.lockAbortHandler);
+    active.lockAbortHandler = undefined;
     if (active.deadlineTimer !== undefined) clearTimeout(active.deadlineTimer);
     active.deadlineTimer = undefined;
     try {
-      await releaseWriterLease(active.lease);
+      await releaseControllerWriterLock(active.writerLock);
     } finally {
       if (this.#active?.generation === active.generation) this.#active = undefined;
     }

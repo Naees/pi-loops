@@ -1,10 +1,12 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttendedGoalController, type GoalLoopHost } from "../../src/controller/attended-goal-controller.js";
 import type { CompletionEvaluator, EvaluationDecision, EvaluationInput } from "../../src/evidence/evaluator.js";
 import type { RunRecord } from "../../src/shared/types.js";
+import { repositoryWriterLeasePath, resolveRepositoryLockIdentity } from "../../src/storage/controller-writer-lock.js";
 import { RunStore } from "../../src/storage/run-store.js";
 
 const temporaryDirectories: string[] = [];
@@ -83,6 +85,45 @@ function recordVerifier(controller: AttendedGoalController, passed: boolean): vo
 }
 
 describe("attended goal controller", () => {
+  it("prevents overlapping writers through different directories in one Git repository", async () => {
+    const { root, controller, host, project } = await harness();
+    const initialized = spawnSync("git", ["init", "-q"], { cwd: project, encoding: "utf8", shell: false });
+    if (initialized.status !== 0) throw new Error(initialized.stderr);
+    const nested = join(project, "nested");
+    await mkdir(nested);
+    const contender = new AttendedGoalController({ dataRoot: root });
+    const nestedHost: GoalLoopHost = { ...host, cwd: nested };
+    const started = await controller.start({ goal: "first writer" }, host);
+
+    await expect(contender.start({ goal: "second writer" }, nestedHost)).rejects.toThrow("Writer lease is already held");
+
+    await controller.stop(started.runId, host);
+    const replacement = await contender.start({ goal: "second writer" }, nestedHost);
+    await contender.stop(replacement.runId, nestedHost);
+  });
+
+  it("aborts active work promptly when the repository guard is compromised", async () => {
+    const { root, host, project, notifications } = await harness();
+    const initialized = spawnSync("git", ["init", "-q"], { cwd: project, encoding: "utf8", shell: false });
+    if (initialized.status !== 0) throw new Error(initialized.stderr);
+    const controller = new AttendedGoalController({ dataRoot: root, writerLeaseStaleMs: 2_000 });
+    await controller.start({ goal: "guarded writer" }, host);
+    const identity = await resolveRepositoryLockIdentity(project);
+    if (identity.kind !== "git") throw new Error("Expected Git identity");
+    const leasePath = repositoryWriterLeasePath(root, identity.commonGitDirectory);
+
+    await rm(`${leasePath}.lock`, { recursive: true, force: true });
+
+    await vi.waitFor(() => {
+      expect(host.abortAgent).toHaveBeenCalled();
+      expect(controller.activeRunId).toBeUndefined();
+      expect(notifications.some((message) => message.includes("Repository writer lock was lost"))).toBe(true);
+    }, { timeout: 3_000 });
+    const replacement = new AttendedGoalController({ dataRoot: root });
+    const run = await replacement.start({ goal: "replacement writer" }, host);
+    await replacement.stop(run.runId, host);
+  });
+
   it("infers existing project test scripts when no verifier is explicit", async () => {
     const { controller, host, project, messages } = await harness();
     await writeFile(join(project, "package.json"), JSON.stringify({ scripts: { test: "vitest run" } }));

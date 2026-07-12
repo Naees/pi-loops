@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { isRunId } from "../shared/ids.js";
+import { sanitizedGitEnvironment } from "./git-environment.js";
 
 const GIT_TIMEOUT_MS = 30_000;
 const MAX_GIT_OUTPUT_BYTES = 1024 * 1024;
@@ -70,7 +71,7 @@ async function runGit(args: readonly string[], cwd: string, signal?: AbortSignal
   return new Promise((resolveCommand, rejectCommand) => {
     const child = spawn("git", [...args], {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      env: sanitizedGitEnvironment(),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -139,7 +140,12 @@ export class GitWorktreeManager {
       if (!/^[0-9a-f]{40,64}$/.test(baseCommit)) throw new NonGitRepositoryError("Git HEAD is not a commit");
       return { repositoryRoot, commonGitDirectory, baseCommit };
     } catch (error) {
-      if (error instanceof GitCommandError) throw new NonGitRepositoryError(error.message);
+      if (error instanceof GitCommandError) {
+        const isHeadFailure = error.args.length === 2 && error.args[0] === "rev-parse" && error.args[1] === "HEAD";
+        const isUnsupportedRepository = error.stderr.startsWith("fatal: not a git repository") ||
+          error.stderr.startsWith("fatal: this operation must be run in a work tree");
+        if (isHeadFailure || isUnsupportedRepository) throw new NonGitRepositoryError(error.message);
+      }
       throw error;
     }
   }

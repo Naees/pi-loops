@@ -45,6 +45,25 @@ describe("writer leases", () => {
     await releaseWriterLease(nextLease);
   });
 
+  it("signals active owners when the proper-lockfile guard is compromised", async () => {
+    const path = await leasePath();
+    const lease = await acquireWriterLease(path, 2_000);
+    await rm(`${path}.lock`, { recursive: true, force: true });
+
+    await expect(new Promise<unknown>((resolve, reject) => {
+      if (lease.signal.aborted) {
+        resolve(lease.signal.reason);
+        return;
+      }
+      const timer = setTimeout(() => reject(new Error("Lease compromise was not signalled")), 3_000);
+      lease.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        resolve(lease.signal.reason);
+      }, { once: true });
+    })).resolves.toBeInstanceOf(Error);
+    await expect(assertWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
+  });
+
   it("recovers a stale proper-lockfile lock", async () => {
     const path = await leasePath();
     const lockDirectory = `${path}.lock`;

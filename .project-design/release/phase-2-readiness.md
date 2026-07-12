@@ -17,6 +17,7 @@
 - Git worktree/review-branch creation, clean-tree enforcement, commit preservation, and no auto-merge.
 - Scheduled run state/evidence/evaluation orchestration with two-phase review-commit/worktree persistence.
 - Strict unattended worker metadata and retention exclusion for unresolved worktrees.
+- Cross-process repository-writer guards keyed by hashed canonical Git common directories, shared by attended and unattended controllers within one Pi data root while preserving project-keyed storage leases. Non-Git attended runs remain project-locked and are not dynamically reclassified if repository topology changes mid-run.
 
 ## Deliberate public boundary
 
@@ -26,7 +27,7 @@ This boundary remains until the blockers below are resolved and a packed schedul
 
 ## Remaining blockers
 
-- Repository-wide writer identity and locking based on the canonical common Git directory, including attended writers and repository subdirectory/worktree aliases.
+- Repository-writer coordination across Pi processes intentionally configured with different Pi data roots; the canonical Git guard currently coordinates all normal processes sharing one data root.
 - Cross-process live schedule-claim ownership so a second Pi process cannot reconcile a live claim as stale.
 - Scheduled run restart/resume that validates and reuses run ID, branch, worktree, and Pi session.
 - Production-process descendant cleanup tests using `RpcWorkerClient`/`RpcWorkerManager`, not only the lifecycle spike client.
@@ -36,11 +37,11 @@ This boundary remains until the blockers below are resolved and a packed schedul
 
 ## Current validation
 
-- `npm run check`: passed (strict source/script typechecks; 166 tests).
+- `npm run check`: passed (strict source/script typechecks; 178 tests).
 - Five consecutive full-suite reruns: passed without flakes.
-- `npm run test:coverage`: passed (85.34% lines, 74.50% branches); coverage was used to target evaluator, RPC, UI, scheduler, and unattended gaps rather than as a release threshold.
+- `npm run test:coverage`: passed (85.67% lines, 74.52% branches); coverage was used to target evaluator, RPC, UI, scheduler, and unattended gaps rather than as a release threshold.
 - `npm run test:packed`: passed; existing `/loops status` behavior restored.
-- `npm run pack:inspect`: passed; 42 intended package files.
+- `npm run pack:inspect`: passed; 44 intended package files.
 - `npm run test:e2e:attended`: passed.
 - `npm run spike:rpc:lifecycle`: passed, including forced-parent-death cleanup 10/10 on macOS/Pi 0.80.6.
 - `npm audit`: passed with zero vulnerabilities.

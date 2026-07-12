@@ -15,11 +15,13 @@ export interface WriterLeaseRecord {
 export interface WriterLease {
   readonly path: string;
   readonly record: WriterLeaseRecord;
+  readonly signal: AbortSignal;
 }
 
 interface LeaseHandle {
   active: boolean;
   compromised?: Error;
+  readonly compromise: AbortController;
   releaseLock: () => Promise<void>;
 }
 
@@ -78,7 +80,7 @@ export async function acquireWriterLease(
   }
 
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const handle: LeaseHandle = { active: true, releaseLock: async () => undefined };
+  const handle: LeaseHandle = { active: true, compromise: new AbortController(), releaseLock: async () => undefined };
   let releaseLock: (() => Promise<void>) | undefined;
   try {
     releaseLock = await lock(path, {
@@ -89,6 +91,7 @@ export async function acquireWriterLease(
       onCompromised(error) {
         handle.active = false;
         handle.compromised = error;
+        handle.compromise.abort(error);
       },
     });
   } catch (error) {
@@ -109,7 +112,7 @@ export async function acquireWriterLease(
     acquiredAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + staleMs).toISOString(),
   };
-  const lease: WriterLease = { path, record };
+  const lease: WriterLease = { path, record, signal: handle.compromise.signal };
 
   try {
     await writeJsonAtomic(path, record);
@@ -129,8 +132,15 @@ export async function assertWriterLease(lease: WriterLease): Promise<void> {
     throw new LeaseOwnershipError(handle?.compromised?.message ?? "Writer lease is not active in this process");
   }
   const current = await readLease(lease.path);
+  if (!handle.active) {
+    throw new LeaseOwnershipError(handle.compromised?.message ?? "Writer lease is not active in this process");
+  }
   if (!current || current.token !== lease.record.token) {
-    throw new LeaseOwnershipError();
+    const error = new LeaseOwnershipError();
+    handle.active = false;
+    handle.compromised = error;
+    handle.compromise.abort(error);
+    throw error;
   }
 }
 
