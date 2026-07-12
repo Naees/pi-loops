@@ -10,7 +10,7 @@ describe("package boundary", () => {
     expect(manifest.files).toBeDefined();
     expect(manifest.files).not.toContain(".project-design/");
     expect(manifest.files).not.toContain("tests/");
-    expect(manifest.files).not.toContain("skills/");
-    expect(manifest.pi?.skills).toBeUndefined();
+    expect(manifest.files).toContain("skills/");
+    expect(manifest.pi?.skills).toEqual(["./skills"]);
   });
 });

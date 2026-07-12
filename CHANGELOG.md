@@ -14,3 +14,6 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Strict configuration parsing, atomic run storage, writer leases, and retention primitives.
 - Fresh current-model evaluator adapter with deterministic verifier precedence.
 - Bounded RPC framing, child watchdog, packed-install validation, and lifecycle spikes.
+- Attended goal loops with `/loops` and `pi_loops` goal, status, stop, resume, clean, and delete behavior.
+- Deterministic verifier collection, fresh completion evaluation, hard active-time limits, budget epochs, interruption recovery, and real-session E2E validation.
+- Packaged `pi-loops` skill for natural-language attended-goal activation.

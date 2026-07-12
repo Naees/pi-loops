@@ -12,9 +12,15 @@ export interface CompletionContract {
   readonly verifiers: readonly VerifierSpec[];
 }
 
-function nonEmpty(name: string, value: string): string {
+const MAX_GOAL_BYTES = 16 * 1024;
+const MAX_ITEM_BYTES = 4 * 1024;
+const MAX_VERIFIERS = 20;
+const MAX_CONSTRAINTS = 50;
+
+function nonEmpty(name: string, value: string, maxBytes: number): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${name} must not be empty`);
+  if (Buffer.byteLength(normalized, "utf8") > maxBytes) throw new Error(`${name} must be at most ${maxBytes} UTF-8 bytes`);
   return normalized;
 }
 
@@ -23,9 +29,11 @@ export function createCompletionContract(
   verifierCommands: readonly string[] = [],
   constraints: readonly string[] = [],
 ): CompletionContract {
-  const normalizedGoal = nonEmpty("Goal", goal);
-  const commands = [...new Set(verifierCommands.map((command) => nonEmpty("Verifier command", command)))];
-  const normalizedConstraints = [...new Set(constraints.map((constraint) => nonEmpty("Constraint", constraint)))];
+  const normalizedGoal = nonEmpty("Goal", goal, MAX_GOAL_BYTES);
+  if (verifierCommands.length > MAX_VERIFIERS) throw new Error(`At most ${MAX_VERIFIERS} verifier commands are allowed`);
+  if (constraints.length > MAX_CONSTRAINTS) throw new Error(`At most ${MAX_CONSTRAINTS} constraints are allowed`);
+  const commands = [...new Set(verifierCommands.map((command) => nonEmpty("Verifier command", command, MAX_ITEM_BYTES)))];
+  const normalizedConstraints = [...new Set(constraints.map((constraint) => nonEmpty("Constraint", constraint, MAX_ITEM_BYTES)))];
 
   return {
     schemaVersion: 1,

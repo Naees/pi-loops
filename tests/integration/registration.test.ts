@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import piLoopsExtension from "../../src/extension/index.js";
+import piLoopsExtension, { toolProvenanceMatches } from "../../src/extension/index.js";
 
 const originalChildMarker = process.env.PI_LOOPS_CHILD;
 
@@ -17,19 +17,30 @@ function mockApi(): {
   registerCommand: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
+  getAllTools: ReturnType<typeof vi.fn>;
+  getCommands: ReturnType<typeof vi.fn>;
 } {
   const registerCommand = vi.fn();
   const registerTool = vi.fn();
   const on = vi.fn();
+  const getAllTools = vi.fn(() => []);
+  const getCommands = vi.fn(() => []);
   return {
-    api: { registerCommand, registerTool, on } as unknown as ExtensionAPI,
+    api: { registerCommand, registerTool, on, getAllTools, getCommands } as unknown as ExtensionAPI,
     registerCommand,
     registerTool,
     on,
+    getAllTools,
+    getCommands,
   };
 }
 
 describe("Pi extension registration", () => {
+  it("compares effective tool provenance against this extension path", () => {
+    expect(toolProvenanceMatches("/package/src/extension/index.ts", "/package/src/extension/index.ts")).toBe(true);
+    expect(toolProvenanceMatches("/other/index.ts", "/package/src/extension/index.ts")).toBe(false);
+  });
+
   it("registers the namespaced command and tool in a parent process", () => {
     delete process.env.PI_LOOPS_CHILD;
     const { api, registerCommand, registerTool } = mockApi();

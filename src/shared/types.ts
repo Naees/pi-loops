@@ -34,6 +34,33 @@ export interface RunTransition {
   readonly reason: string;
 }
 
+export interface StoredVerifierEvidence {
+  readonly verifierId: string;
+  readonly criterion: string;
+  readonly command: string;
+  readonly observed: boolean;
+  readonly passed: boolean;
+  readonly summary: string;
+  readonly toolCallId?: string;
+}
+
+export interface StoredEvaluationDecision {
+  readonly complete: boolean;
+  readonly needsUser: boolean;
+  readonly reason: string;
+  readonly failedCriteria: readonly string[];
+  readonly feedback: string | null;
+}
+
+export interface BudgetHistoryEntry {
+  readonly epoch: number;
+  readonly budget: RunBudget;
+  readonly cycles: number;
+  readonly activeMs: number;
+  readonly endedAt: string;
+  readonly reason: string;
+}
+
 export interface RunRecord {
   readonly schemaVersion: 1;
   readonly runId: string;
@@ -42,8 +69,19 @@ export interface RunRecord {
   readonly mode: RunMode;
   readonly state: RunState;
   readonly goal: string;
+  readonly constraints?: readonly string[];
+  readonly verifierCommands?: readonly string[];
   readonly budget: RunBudget;
+  readonly budgetEpoch?: number;
+  readonly budgetHistory?: readonly BudgetHistoryEntry[];
   readonly cycle: number;
+  readonly totalCycles?: number;
+  readonly activeMs?: number;
+  readonly progressSignature?: string;
+  readonly equivalentFailures?: number;
+  readonly latestWorkerSummary?: string;
+  readonly latestEvidence?: readonly StoredVerifierEvidence[];
+  readonly latestEvaluation?: StoredEvaluationDecision;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly transitions: readonly RunTransition[];

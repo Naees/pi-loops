@@ -8,6 +8,7 @@ import { assertWriterLease, type WriterLease } from "./lease.js";
 import { selectRetentionEvictions } from "./retention.js";
 
 const PROJECT_ID_PATTERN = /^project_[0-9a-f]{16}$/;
+const MAX_RUN_RECORD_BYTES = 2 * 1024 * 1024;
 const ACTIVE_CRASH_STATES = new Set<RunState>([
   "configuring",
   "preflight",
@@ -45,6 +46,64 @@ function isTransition(value: unknown): boolean {
   );
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isStoredEvidence(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["verifierId", "criterion", "command", "observed", "passed", "summary", "toolCallId"])) {
+    return false;
+  }
+  return (
+    typeof value.verifierId === "string" && value.verifierId.length <= 128 &&
+    typeof value.criterion === "string" && Buffer.byteLength(value.criterion, "utf8") <= 4 * 1024 &&
+    typeof value.command === "string" && Buffer.byteLength(value.command, "utf8") <= 4 * 1024 &&
+    typeof value.observed === "boolean" &&
+    typeof value.passed === "boolean" &&
+    typeof value.summary === "string" && Buffer.byteLength(value.summary, "utf8") <= 16 * 1024 &&
+    (value.toolCallId === undefined || typeof value.toolCallId === "string")
+  );
+}
+
+function isStoredEvaluation(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["complete", "needsUser", "reason", "failedCriteria", "feedback"])) return false;
+  return (
+    typeof value.complete === "boolean" &&
+    typeof value.needsUser === "boolean" &&
+    typeof value.reason === "string" && Buffer.byteLength(value.reason, "utf8") <= 8 * 1024 &&
+    isStringArray(value.failedCriteria) && value.failedCriteria.length <= 50 &&
+    value.failedCriteria.every((criterion) => Buffer.byteLength(criterion, "utf8") <= 4 * 1024) &&
+    (typeof value.feedback === "string" || value.feedback === null) &&
+    (typeof value.feedback !== "string" || Buffer.byteLength(value.feedback, "utf8") <= 16 * 1024)
+  );
+}
+
+function isBudget(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["maxActiveMs", "maxCycles", "stallThreshold"]) &&
+    isPositiveSafeInteger(value.maxActiveMs) &&
+    isPositiveSafeInteger(value.maxCycles) &&
+    isPositiveSafeInteger(value.stallThreshold)
+  );
+}
+
+function isBudgetHistoryEntry(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["epoch", "budget", "cycles", "activeMs", "endedAt", "reason"])) return false;
+  return (
+    isPositiveSafeInteger(value.epoch) &&
+    isBudget(value.budget) &&
+    Number.isSafeInteger(value.cycles) &&
+    (value.cycles as number) >= 0 &&
+    Number.isSafeInteger(value.activeMs) &&
+    (value.activeMs as number) >= 0 &&
+    typeof value.endedAt === "string" &&
+    Number.isFinite(Date.parse(value.endedAt)) &&
+    typeof value.reason === "string" &&
+    value.reason.trim().length > 0
+  );
+}
+
 function hasCoherentTransitionChain(value: Record<string, unknown>): boolean {
   const state = value.state as RunState;
   const transitions = value.transitions as { from: RunState | null; to: RunState; at: string }[];
@@ -70,8 +129,19 @@ function parseRunRecord(value: unknown): RunRecord {
       "mode",
       "state",
       "goal",
+      "constraints",
+      "verifierCommands",
       "budget",
+      "budgetEpoch",
+      "budgetHistory",
       "cycle",
+      "totalCycles",
+      "activeMs",
+      "progressSignature",
+      "equivalentFailures",
+      "latestWorkerSummary",
+      "latestEvidence",
+      "latestEvaluation",
       "createdAt",
       "updatedAt",
       "transitions",
@@ -90,13 +160,27 @@ function parseRunRecord(value: unknown): RunRecord {
     !RUN_STATES.includes(value.state as RunState) ||
     typeof value.goal !== "string" ||
     value.goal.trim().length === 0 ||
-    !isRecord(value.budget) ||
-    !hasOnlyKeys(value.budget, ["maxActiveMs", "maxCycles", "stallThreshold"]) ||
-    !isPositiveSafeInteger(value.budget.maxActiveMs) ||
-    !isPositiveSafeInteger(value.budget.maxCycles) ||
-    !isPositiveSafeInteger(value.budget.stallThreshold) ||
+    Buffer.byteLength(value.goal, "utf8") > 32 * 1024 ||
+    (value.constraints !== undefined &&
+      (!isStringArray(value.constraints) || value.constraints.length > 50 ||
+        value.constraints.some((item) => Buffer.byteLength(item, "utf8") > 4 * 1024))) ||
+    (value.verifierCommands !== undefined &&
+      (!isStringArray(value.verifierCommands) || value.verifierCommands.length > 20 ||
+        value.verifierCommands.some((item) => Buffer.byteLength(item, "utf8") > 4 * 1024))) ||
+    !isBudget(value.budget) ||
+    (value.budgetEpoch !== undefined && !isPositiveSafeInteger(value.budgetEpoch)) ||
+    (value.budgetHistory !== undefined &&
+      (!Array.isArray(value.budgetHistory) || value.budgetHistory.length > 1_000 || !value.budgetHistory.every(isBudgetHistoryEntry))) ||
     !Number.isSafeInteger(value.cycle) ||
     (value.cycle as number) < 0 ||
+    (value.totalCycles !== undefined && (!Number.isSafeInteger(value.totalCycles) || (value.totalCycles as number) < 0)) ||
+    (value.activeMs !== undefined && (!Number.isSafeInteger(value.activeMs) || (value.activeMs as number) < 0)) ||
+    (value.progressSignature !== undefined && typeof value.progressSignature !== "string") ||
+    (value.equivalentFailures !== undefined && (!Number.isSafeInteger(value.equivalentFailures) || (value.equivalentFailures as number) < 0)) ||
+    (value.latestWorkerSummary !== undefined &&
+      (typeof value.latestWorkerSummary !== "string" || Buffer.byteLength(value.latestWorkerSummary, "utf8") > 32 * 1024)) ||
+    (value.latestEvidence !== undefined && (!Array.isArray(value.latestEvidence) || !value.latestEvidence.every(isStoredEvidence))) ||
+    (value.latestEvaluation !== undefined && !isStoredEvaluation(value.latestEvaluation)) ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
     typeof value.updatedAt !== "string" ||
@@ -145,12 +229,17 @@ export class RunStore {
     await this.#assertMutationLease();
     if (run.projectId !== this.#projectId) throw new Error("Run project ID does not match this store");
     parseRunRecord(run);
+    if (Buffer.byteLength(JSON.stringify(run), "utf8") > MAX_RUN_RECORD_BYTES) {
+      throw new Error(`Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`);
+    }
     await writeJsonAtomic(this.#path(run.runId), run);
   }
 
   async load(runId: string): Promise<RunRecord | undefined> {
     const path = this.#path(runId);
     try {
+      const metadata = await stat(path);
+      if (metadata.size > MAX_RUN_RECORD_BYTES) throw new Error(`Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`);
       const run = parseRunRecord(JSON.parse(await readFile(path, "utf8")) as unknown);
       if (run.projectId !== this.#projectId) throw new Error("Stored run belongs to a different project");
       return run;

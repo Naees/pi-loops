@@ -7,7 +7,7 @@ const expectedTransitions: Readonly<Record<RunState, readonly RunState[]>> = {
   preflight: ["queued", "starting", "awaiting_user", "cancelled", "interrupted", "failed"],
   queued: ["starting", "cancelled", "interrupted", "failed"],
   starting: ["running", "cancelled", "interrupted", "failed"],
-  running: ["verifying", "awaiting_user", "cancelled", "interrupted", "failed"],
+  running: ["verifying", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "failed"],
   verifying: ["evaluating", "running", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "stalled", "failed"],
   evaluating: ["finalizing", "running", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "stalled", "failed"],
   finalizing: ["completed", "awaiting_user", "cancelled", "interrupted", "failed"],

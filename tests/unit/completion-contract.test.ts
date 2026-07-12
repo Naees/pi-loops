@@ -28,8 +28,13 @@ describe("completion contracts", () => {
     expect(inferBacktickedVerifierCommands("Verify `/tmp/report.txt` exists.")).toEqual([]);
   });
 
-  it("rejects empty goals and verifier commands", () => {
+  it("rejects empty or oversized contracts", () => {
     expect(() => createCompletionContract("  ")).toThrow("Goal must not be empty");
     expect(() => createCompletionContract("goal", [""])).toThrow("Verifier command must not be empty");
+    expect(() => createCompletionContract("x".repeat(16 * 1024 + 1))).toThrow("at most 16384 UTF-8 bytes");
+    expect(() => createCompletionContract("goal", ["界".repeat(2_000)])).toThrow("at most 4096 UTF-8 bytes");
+    expect(() => createCompletionContract("goal", Array.from({ length: 21 }, (_, index) => `npm test -- ${index}`))).toThrow(
+      "At most 20 verifier commands",
+    );
   });
 });

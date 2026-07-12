@@ -171,8 +171,8 @@ pi install npm:pi-subagents
 
 - At most 50 terminal runs are retained per project.
 - The least recently used eligible run is removed when the limit is exceeded.
-- Deletion removes its ID, record, evidence, logs, and session data.
-- No tombstone remains.
+- Deletion removes its ID, run record, evidence, logs, and Pi Loops-managed child-session data.
+- No Pi Loops runtime tombstone remains. The supported API cannot erase commands, messages, or concise custom entries already present in the append-only parent Pi transcript; Pi Loops never edits session JSONL directly.
 - Active, interrupted, queued, or unresolved-worktree runs are not automatically removed.
 - Project code branches are not disposable runtime storage.
 
@@ -990,7 +990,7 @@ Validated during design on 2026-07-12 against Pi `0.80.6` and Node `25.1.0`. Pi 
 - **D-020:** Permit one active writer per repository.
 - **D-021:** Store runtime state user-locally with concise Pi-session mirrors.
 - **D-022:** Retain 50 terminal runs per project by recent use.
-- **D-023:** Eviction removes the complete run record and ID; no tombstone.
+- **D-023:** Eviction removes the complete Pi Loops runtime record and ID with no runtime tombstone; append-only parent Pi transcript history and project code are outside this deletion boundary (clarified by ADR-006).
 - **D-024:** Use explicit criteria first, then visible project inference.
 - **D-025:** Stall and exhaustion are recoverable with new guidance and finite budget.
 - **D-026:** Use the current selected model for fresh evaluation.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,6 +20,58 @@ function run(command, args, options = {}) {
   return result;
 }
 
+async function runPackedStatus(piExecutable, extensionPath, cwd, environment) {
+  const child = spawn(
+    piExecutable,
+    ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extensionPath],
+    { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"], shell: false },
+  );
+  let buffer = "";
+  let stderr = "";
+  const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+
+  const notificationPromise = new Promise((resolveNotification, rejectNotification) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      rejectNotification(new Error(`Packed /loops status timed out\nstderr:\n${stderr}`));
+    }, 15_000);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      rejectNotification(error);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-64 * 1024);
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      while (true) {
+        const newline = buffer.indexOf("\n");
+        if (newline === -1) break;
+        const line = buffer.slice(0, newline).replace(/\r$/, "");
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const message = JSON.parse(line);
+        if (
+          message.type === "extension_ui_request" &&
+          message.method === "notify" &&
+          message.message === "No Pi Loops goal runs are stored for this project."
+        ) {
+          clearTimeout(timer);
+          child.stdin.end();
+          resolveNotification(message);
+          return;
+        }
+      }
+    });
+  });
+  child.stdin.write(`${JSON.stringify({ id: "status", type: "prompt", message: "/loops status" })}\n`);
+  const notification = await notificationPromise;
+  if (!notification) throw new Error("Packed /loops status returned no notification");
+  await exited;
+}
+
 try {
   const pack = run("npm", ["pack", "--json", "--pack-destination", temporaryRoot]);
   const report = JSON.parse(pack.stdout)[0];
@@ -37,6 +89,10 @@ try {
   const packageRoot = join(installRoot, "node_modules", "@naees", "pi-loops");
   const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   if (manifest.name !== "@naees/pi-loops") throw new Error("Installed package identity is incorrect");
+  if (!Array.isArray(manifest.pi?.skills) || !manifest.pi.skills.includes("./skills")) {
+    throw new Error("Installed package does not expose the pi-loops skill");
+  }
+  await readFile(join(packageRoot, "skills", "pi-loops", "SKILL.md"), "utf8");
 
   const extensionPath = join(packageRoot, "src", "extension", "index.ts");
   const piExecutable = process.env.PI_LOOPS_TEST_PI ?? "pi";
@@ -59,8 +115,14 @@ try {
   if (!response.data.commands.some((command) => command.name === "loops" && command.source === "extension")) {
     throw new Error("Packed extension did not register /loops");
   }
+  await runPackedStatus(
+    piExecutable,
+    extensionPath,
+    resolve(temporaryRoot),
+    { ...process.env, PI_CODING_AGENT_DIR: join(temporaryRoot, "pi-home-status") },
+  );
 
-  console.log(`Packed install passed: ${report.files.length} files; /loops loaded from ${extensionPath}`);
+  console.log(`Packed install passed: ${report.files.length} files; /loops loaded and status executed from ${extensionPath}`);
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }

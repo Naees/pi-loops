@@ -25,6 +25,7 @@
   },
   "files": [
     "src/",
+    "skills/",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -33,6 +34,9 @@
   "pi": {
     "extensions": [
       "./src/extension/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "scripts": {
@@ -42,6 +46,7 @@
     "check": "npm run typecheck && npm test",
     "pack:inspect": "node scripts/inspect-pack.mjs",
     "test:packed": "node scripts/test-packed-install.mjs",
+    "test:e2e:attended": "node scripts/e2e-attended-goal.mjs",
     "spike:rpc": "node scripts/spike-rpc-worker.ts",
     "spike:watchdog": "node scripts/spike-child-watchdog.mjs",
     "spike:evaluator": "node scripts/spike-evaluator.mjs",

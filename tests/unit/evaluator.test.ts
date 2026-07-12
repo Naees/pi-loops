@@ -22,6 +22,21 @@ describe("evaluator decisions", () => {
     });
   });
 
+  it("rejects oversized model-controlled output", () => {
+    expect(() => parseEvaluationDecision("x".repeat(64 * 1024 + 1))).toThrow("exceeds 65536 bytes");
+    expect(() =>
+      parseEvaluationDecision(
+        JSON.stringify({
+          complete: false,
+          needsUser: false,
+          reason: "incomplete",
+          failedCriteria: ["x".repeat(4 * 1024 + 1)],
+          feedback: null,
+        }),
+      ),
+    ).toThrow("invalid shape");
+  });
+
   it("rejects markdown, unknown fields, and contradictory outcomes", () => {
     expect(() => parseEvaluationDecision("```json\n{}\n```" )).toThrow(InvalidEvaluatorResponseError);
     expect(() =>

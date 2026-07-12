@@ -1,9 +1,8 @@
 # Pi Loops
 
-> **Status: design approved; implementation is in progress.**  
-> The npm package and commands described below are not available yet.
+> **Status: attended Phase 1 goal loops are implemented in source; no public npm release exists yet.**
 
-Pi Loops is a planned [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
+Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
 The project is designed around one rule:
 
@@ -26,7 +25,7 @@ Once published, it will require an existing working Pi installation with:
 
 No Pi Loops configuration will be required for normal use.
 
-## Planned usage
+## Attended goal usage
 
 ### Natural language
 
@@ -42,24 +41,15 @@ Do not modify the tests.
 Do not modify existing auth tests.
 ```
 
-### Schedule work
-
-```text
-/loops schedule every 30m -- check CI and address failures
-/loops schedule at 14:00 -- run release-readiness checks
-/loops schedule in 2h -- recheck the deployment
-```
-
-Schedules will be active only while Pi is open in their project. Missed occurrences will not be replayed.
+Goal loops currently run in the attended Pi session and current checkout. Scheduling is planned for Phase 2 and is not enabled yet.
 
 ## Loop modes
 
-Pi Loops is planned in phases:
+Pi Loops is delivered in phases:
 
-1. **Turn-based verification** — strengthen Pi's normal agent loop with explicit evidence.
-2. **Goal loops** — keep running bounded work cycles until completion is accepted.
-3. **Scheduled loops** — trigger goals at a time or interval while Pi is running.
-4. **Proactive loops** — trigger goals from filesystem or other Pi-extension events.
+1. **Turn-based verification and attended goal loops — implemented:** bounded cycles, deterministic evidence, fresh evaluation, status, stop, interruption, and resume.
+2. **Scheduled loops — planned:** trigger goals at a time or interval while Pi is running.
+3. **Proactive loops — planned:** trigger goals from filesystem or other Pi-extension events.
 
 ## Completion model
 
@@ -70,7 +60,7 @@ A goal loop combines two forms of verification:
 
 Required deterministic checks take precedence. A model evaluator cannot declare success while a required check is failing or missing.
 
-The initial default profile is planned as:
+The default attended-goal profile is:
 
 - 3 hours of active execution.
 - 15 outer work cycles.
@@ -79,20 +69,22 @@ The initial default profile is planned as:
 
 Runs end explicitly as completed, failed, cancelled, interrupted, stalled, or budget exhausted. Interrupted and bounded-failure runs can be resumed with a new finite budget.
 
-## Planned command surface
+## Implemented command surface
 
 ```text
 /loops goal <goal>
-/loops schedule <time-expression> -- <goal>
-/loops status [run-id|schedule-id]
+/loops status
 /loops stop [run-id]
-/loops resume [run-id]
-/loops watch ...
-/loops clean [filters]
+/loops resume [run-id] [guidance]
+/loops clean
 /loops delete <run-id>
 ```
 
-Each execution receives a run ID such as `run_a4f2`. A persisted schedule receives a separate schedule ID.
+The model-facing `pi_loops` tool exposes equivalent `goal`, `status`, `stop`, and `resume` actions, including optional explicit verifier commands, constraints, and finite budget overrides.
+
+Scheduling and watch commands remain planned for later phases. `/loops clean` enforces bounded terminal-record retention; `/loops delete` requires confirmation and removes one stored run record.
+
+Each goal execution receives a run ID such as `run_a4f2`.
 
 If only one run is resumable, `/loops resume` will not require its ID. If several qualify, Pi Loops will present a selector.
 
@@ -131,7 +123,7 @@ A mandatory implementation spike must prove cancellation, crash cleanup, resume,
 
 ## Optional `pi-subagents`
 
-[`pi-subagents`](https://github.com/nicobailon/pi-subagents) will be optional but highly recommended for parallel workers and independent review:
+[`pi-subagents`](https://github.com/nicobailon/pi-subagents) is optional but highly recommended for parallel workers and independent review:
 
 ```text
 pi install npm:pi-subagents
@@ -141,7 +133,7 @@ Pi Loops will not bundle, fork, or import private `pi-subagents` implementation 
 
 ## Permissions and scope
 
-Pi Loops will rely on Pi's existing permission behavior. It will not add a second permission framework or become a general policy package.
+Pi Loops relies on Pi's existing permission behavior. It does not add a second permission framework or become a general policy package.
 
 Pi Loops is responsible for:
 
@@ -156,15 +148,17 @@ Provider authentication, deployment authorization, secret management, and vendor
 
 ## Storage and cleanup
 
-Runtime state will be stored in user-local Pi Loops storage, not added to the target repository.
+Attended goal state is stored in user-local Pi Loops storage, not added to the target repository.
 
-Planned retention behavior:
+Current retention behavior:
 
 - Keep at most 50 eligible terminal runs per project.
 - Remove the least recently used run when that limit is exceeded.
-- Remove its ID, metadata, evidence, logs, and session data completely.
+- Remove its Pi Loops runtime record, ID index, evidence, logs, and managed child-session data completely.
 - Never automatically remove active, interrupted, queued, or unresolved-worktree runs.
 - Never treat a project code branch as disposable runtime storage.
+
+Pi session history is append-only. `/loops delete` cannot erase the user's command, agent messages, or concise state entries already written to the parent Pi transcript. New state entries intentionally omit goal text and evidence. Project files and Git history are also outside runtime-record deletion.
 
 ## Configuration
 
@@ -189,12 +183,12 @@ No project configuration file will be created automatically.
 - Evaluator integration.
 - Packed-package clean-install testing.
 
-### Phase 1 — Goal loops
+### Phase 1 — Goal loops (implemented, undergoing hardening)
 
 - Natural-language and `/loops goal` entry points.
-- Status, stop, and resume.
-- Completion contracts and evidence.
-- Fresh evaluation, budgets, and stall detection.
+- Status, stop, interruption recovery, and resume.
+- Completion contracts and bounded evidence.
+- Fresh evaluation, budgets, stall detection, persistence, leases, and retention.
 
 ### Phase 2 — Scheduling
 
@@ -239,10 +233,10 @@ Security issues should eventually be reported through the process documented in 
 
 ## Project status
 
-The product contract and architecture have been approved. Implementation has not yet been completed, and no public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended Phase 1 goal loops are implemented and under validation. Scheduling, proactive triggers, and final production hardening remain incomplete; no public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 
 ## License
 
-Pi Loops is planned for release under the [MIT License](https://opensource.org/license/mit).
+Pi Loops is licensed under the [MIT License](LICENSE).

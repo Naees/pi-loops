@@ -39,6 +39,9 @@ export class InvalidEvaluatorResponseError extends Error {
   }
 }
 
+const MAX_EVALUATOR_TEXT_BYTES = 32 * 1024;
+const MAX_EVALUATOR_PAYLOAD_BYTES = 128 * 1024;
+
 const SYSTEM_PROMPT = `You are an independent completion evaluator for a bounded coding loop.
 Judge only whether the declared goal and constraints are satisfied by the supplied evidence.
 Required deterministic verifier failures or missing evidence can never be overridden.
@@ -46,11 +49,38 @@ Return exactly one JSON object with this shape:
 {"complete":boolean,"needsUser":boolean,"reason":string,"failedCriteria":string[],"feedback":string|null}
 Do not include markdown, commentary, or tool calls.`;
 
+function boundedText(value: string, maxBytes = MAX_EVALUATOR_TEXT_BYTES): string {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength <= maxBytes) return value;
+  const marker = "\n[truncated by Pi Loops]";
+  const contentBudget = maxBytes - Buffer.byteLength(marker, "utf8");
+  let truncated = bytes.subarray(0, Math.max(0, contentBudget)).toString("utf8");
+  while (Buffer.byteLength(truncated + marker, "utf8") > maxBytes) truncated = truncated.slice(0, -1);
+  return truncated + marker;
+}
+
+function boundedEvaluationInput(input: EvaluationInput): EvaluationInput {
+  return {
+    goal: boundedText(input.goal),
+    constraints: input.constraints.slice(0, 50).map((constraint) => boundedText(constraint, 4 * 1024)),
+    workerSummary: boundedText(input.workerSummary),
+    verifierEvidence: input.verifierEvidence.slice(0, 20).map((evidence) => ({
+      criterion: boundedText(evidence.criterion, 4 * 1024),
+      passed: evidence.passed,
+      summary: boundedText(evidence.summary, 8 * 1024),
+    })),
+    ...(input.previousFeedback === undefined ? {} : { previousFeedback: boundedText(input.previousFeedback, 8 * 1024) }),
+  };
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 export function parseEvaluationDecision(text: string): EvaluationDecision {
+  if (Buffer.byteLength(text, "utf8") > 64 * 1024) {
+    throw new InvalidEvaluatorResponseError("Evaluator response exceeds 65536 bytes");
+  }
   let value: unknown;
   try {
     value = JSON.parse(text.trim()) as unknown;
@@ -70,8 +100,12 @@ export function parseEvaluationDecision(text: string): EvaluationDecision {
     typeof record.needsUser !== "boolean" ||
     typeof record.reason !== "string" ||
     record.reason.trim().length === 0 ||
+    Buffer.byteLength(record.reason, "utf8") > 8 * 1024 ||
     !isStringArray(record.failedCriteria) ||
-    !(typeof record.feedback === "string" || record.feedback === null)
+    record.failedCriteria.length > 50 ||
+    record.failedCriteria.some((criterion) => Buffer.byteLength(criterion, "utf8") > 4 * 1024) ||
+    !(typeof record.feedback === "string" || record.feedback === null) ||
+    (typeof record.feedback === "string" && Buffer.byteLength(record.feedback, "utf8") > 16 * 1024)
   ) {
     throw new InvalidEvaluatorResponseError("Evaluator response has an invalid shape");
   }
@@ -99,7 +133,8 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
   }
 
   async evaluate(input: EvaluationInput, signal?: AbortSignal): Promise<EvaluationDecision> {
-    const deterministicFailures = input.verifierEvidence.filter((evidence) => !evidence.passed);
+    const boundedInput = boundedEvaluationInput(input);
+    const deterministicFailures = boundedInput.verifierEvidence.filter((evidence) => !evidence.passed);
     if (deterministicFailures.length > 0) {
       return {
         complete: false,
@@ -120,9 +155,13 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
 
     const userMessage: UserMessage = {
       role: "user",
-      content: [{ type: "text", text: JSON.stringify(input) }],
+      content: [{ type: "text", text: JSON.stringify(boundedInput) }],
       timestamp: Date.now(),
     };
+    if (Buffer.byteLength(JSON.stringify(boundedInput), "utf8") > MAX_EVALUATOR_PAYLOAD_BYTES) {
+      throw new InvalidEvaluatorResponseError("Evaluator input exceeds the bounded payload limit");
+    }
+
     const response = await complete(
       model,
       { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },

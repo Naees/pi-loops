@@ -1,11 +1,11 @@
 ---
 name: pi-loops
-description: Use bounded Pi Loops goal and schedule workflows when a user asks to keep iterating until a condition is met, repeat work on a cadence, inspect loop status, stop work, or resume an interrupted run.
+description: Use bounded Pi Loops attended goal workflows when a user asks to keep iterating until a condition is met, inspect goal-loop status, stop work, or resume an interrupted run.
 ---
 
 # Pi Loops
 
-Use the `pi_loops` tool for persistent loop workflow state. Use `/loops` when giving the user an explicit command example.
+Use the `pi_loops` tool for persistent attended goal-loop state. Use `/loops` when giving the user an explicit command example. Scheduling and proactive triggers are not implemented yet.
 
 ## Goal quality
 
