@@ -19,7 +19,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Packaged `pi-loops` skill for natural-language attended-goal activation.
 - Deterministic macOS RPC lifecycle spike covering settlement, streaming/tool aborts, parent death, descendant cleanup, session/worktree resume, and UI relay.
 - Fail-closed current-Pi launch resolution for Node CLI and standalone executable layouts without PATH search.
-- Internal Phase 2 scheduling domain with natural time parsing, project-bound persistence, missed-run discard, overlap coalescing, and shutdown-aware timers; public scheduling remains gated.
+- Phase 2 scheduling with natural time parsing, normalized confirmation, project-bound persistence, missed-run discard, overlap coalescing, restart support, and shutdown-aware timers.
 - Internal bounded RPC worker transport, fail-closed UI relay, isolated Git worktrees, review-branch finalization, and scheduled-run orchestration.
 
 ### Changed

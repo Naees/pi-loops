@@ -24,6 +24,8 @@ function hostUi(): ParentWorkerUi {
 
 const fakeRpcProgram = `
 const fs = require("node:fs");
+const { spawn } = require("node:child_process");
+let descendant;
 fs.writeFileSync(process.env.PI_LOOPS_TEST_ARGV, JSON.stringify({ argv: process.argv, marker: process.env.PI_LOOPS_CHILD, deadline: process.env.PI_LOOPS_CHILD_DEADLINE_MS, pid: process.pid }));
 let buffer = "";
 let waitingUi = false;
@@ -41,10 +43,11 @@ process.stdin.on("data", chunk => {
       send({ type: "response", id: command.id, command: command.type, success: true });
       send({ type: "agent_start" });
       if (command.message.includes("UI")) { waitingUi = true; send({ type: "extension_ui_request", id: "ui-1", method: "confirm", title: "Allow?", message: "Continue?" }); }
+      else if (command.message.includes("DESCENDANT")) { descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }); fs.writeFileSync(process.env.PI_LOOPS_TEST_DESCENDANT, String(descendant.pid)); }
       else send({ type: "agent_settled" });
     }
     else if (command.type === "get_last_assistant_text") send({ type: "response", id: command.id, command: command.type, success: true, data: { text: waitingUi ? null : "controlled result" } });
-    else if (command.type === "abort") send({ type: "response", id: command.id, command: command.type, success: true });
+    else if (command.type === "abort") { if (descendant) descendant.kill("SIGTERM"); send({ type: "response", id: command.id, command: command.type, success: true }); }
   }
 });
 `;
@@ -55,12 +58,15 @@ async function harness() {
   const sessions = join(root, "sessions");
   const argvFile = join(root, "argv.json");
   const sessionFile = join(sessions, "session.jsonl");
+  const descendantFile = join(root, "descendant.pid");
   temporaryDirectories.push(root);
   await import("node:fs/promises").then(({ mkdir }) => mkdir(cwd));
   const previousArgv = process.env.PI_LOOPS_TEST_ARGV;
   const previousSession = process.env.PI_LOOPS_TEST_SESSION;
+  const previousDescendant = process.env.PI_LOOPS_TEST_DESCENDANT;
   process.env.PI_LOOPS_TEST_ARGV = argvFile;
   process.env.PI_LOOPS_TEST_SESSION = sessionFile;
+  process.env.PI_LOOPS_TEST_DESCENDANT = descendantFile;
   const manager = new RpcWorkerManager({
     platform: "darwin",
     extensionPath: "/tmp/pi-loops-extension.ts",
@@ -76,8 +82,10 @@ async function harness() {
     else process.env.PI_LOOPS_TEST_ARGV = previousArgv;
     if (previousSession === undefined) delete process.env.PI_LOOPS_TEST_SESSION;
     else process.env.PI_LOOPS_TEST_SESSION = previousSession;
+    if (previousDescendant === undefined) delete process.env.PI_LOOPS_TEST_DESCENDANT;
+    else process.env.PI_LOOPS_TEST_DESCENDANT = previousDescendant;
   };
-  return { manager, root, cwd, sessions, argvFile, sessionFile, restore };
+  return { manager, root, cwd, sessions, argvFile, sessionFile, descendantFile, restore };
 }
 
 function expectProcessGone(pid: number): void {
@@ -96,6 +104,50 @@ describe("RPC worker manager", () => {
       expect(launched.marker).toMatch(/^[0-9a-f-]{36}$/);
       expect(Number(launched.deadline)).toBeGreaterThan(Date.now());
       await worker.stop();
+    } finally {
+      restore();
+    }
+  });
+
+  it("resumes only the exact persisted session identity", async () => {
+    const { manager, cwd, sessions, sessionFile, restore } = await harness();
+    try {
+      await mkdir(sessions, { recursive: true });
+      await writeFile(sessionFile, "session\n");
+      const worker = await manager.launch({
+        runId: "run_1234abcd",
+        cwd,
+        sessionDirectory: sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+        resume: { sessionId: "session-1", sessionFile },
+      }, hostUi());
+      await worker.stop();
+      await expect(manager.launch({
+        runId: "run_1234abcd",
+        cwd,
+        sessionDirectory: sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+        resume: { sessionId: "different-session", sessionFile },
+      }, hostUi())).rejects.toThrow("different session identity");
+    } finally {
+      restore();
+    }
+  });
+
+  it("stops a production-manager RPC child and its controlled descendant", async () => {
+    const { manager, cwd, sessions, descendantFile, restore } = await harness();
+    try {
+      const worker = await manager.launch({ runId: "run_1234abcd", cwd, sessionDirectory: sessions, absoluteDeadlineMs: Date.now() + 60_000 }, hostUi());
+      const cycle = worker.runCycle("START DESCENDANT").catch(() => undefined);
+      let descendantPid = 0;
+      await vi.waitFor(async () => {
+        descendantPid = Number(await readFile(descendantFile, "utf8"));
+        expect(descendantPid).toBeGreaterThan(0);
+      });
+      await worker.stop();
+      await cycle;
+      expectProcessGone(worker.identity.pid);
+      await vi.waitFor(() => expectProcessGone(descendantPid));
     } finally {
       restore();
     }

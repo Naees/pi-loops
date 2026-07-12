@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { RpcJsonlDecoder } from "./rpc-jsonl.js";
+import { RpcJsonlDecoder } from "./rpc-jsonl.ts";
 
 export interface RpcWorkerClientOptions {
   readonly executable: string;

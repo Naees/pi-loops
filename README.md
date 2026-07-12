@@ -1,6 +1,6 @@
 # Pi Loops
 
-> **Status: attended Phase 1 goal loops are implemented in source; no public npm release exists yet.**
+> **Status: attended goals and macOS/Pi 0.80.6 scheduling are implemented in source; no public npm release exists yet.**
 
 Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
@@ -41,14 +41,14 @@ Do not modify the tests.
 Do not modify existing auth tests.
 ```
 
-Goal loops currently run in the attended Pi session and current checkout. Scheduling is planned for Phase 2 and is not enabled yet.
+Goal loops run in the attended Pi session and current checkout. Scheduled writers run only while Pi is open, in isolated Git worktrees, and leave successful work on review branches without auto-merging.
 
 ## Loop modes
 
 Pi Loops is delivered in phases:
 
 1. **Turn-based verification and attended goal loops — implemented:** bounded cycles, deterministic evidence, fresh evaluation, status, stop, interruption, and resume.
-2. **Scheduled loops — planned:** trigger goals at a time or interval while Pi is running.
+2. **Scheduled loops:** trigger bounded goals at a time or interval while Pi is running (validated on macOS with Pi 0.80.6).
 3. **Proactive loops — planned:** trigger goals from filesystem or other Pi-extension events.
 
 ## Completion model
@@ -82,7 +82,7 @@ Runs end explicitly as completed, failed, cancelled, interrupted, stalled, or bu
 
 The model-facing `pi_loops` tool exposes equivalent `goal`, `status`, `stop`, and `resume` actions, including optional explicit verifier commands, constraints, and finite budget overrides.
 
-Scheduling and watch commands remain planned for later phases. `/loops clean` enforces bounded terminal-record retention; `/loops delete` requires confirmation and removes one stored run record.
+`/loops schedule <time-expression> -- <goal>` creates a confirmed project-bound schedule. `/loops clean` enforces bounded terminal-record retention; `/loops delete` requires confirmation and removes one stored run or schedule record.
 
 Each goal execution receives a run ID such as `run_a4f2`.
 
@@ -190,7 +190,7 @@ No project configuration file will be created automatically.
 - Completion contracts and bounded evidence.
 - Fresh evaluation, budgets, stall detection, persistence, leases, and retention.
 
-### Phase 2 — Scheduling
+### Phase 2 — Scheduling (implemented for macOS/Pi 0.80.6)
 
 - One-off and recurring schedules.
 - Coalescing and project binding.
@@ -226,7 +226,7 @@ Report security issues through the private process documented in [`SECURITY.md`]
 
 ## Project status
 
-The product contract and architecture are approved. Attended Phase 1 goal loops are implemented and under validation. Scheduling, proactive triggers, and final production hardening remain incomplete; no public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended goals and macOS scheduling are implemented and under validation. Proactive triggers and final production hardening remain incomplete; no public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 

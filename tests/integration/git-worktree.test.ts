@@ -65,7 +65,17 @@ describe("Git worktree manager", () => {
     await expect(manager.create("run_1234abcd", identity, managedRoot)).rejects.toBeInstanceOf(ManagedWorktreeConflictError);
   });
 
-  it("refuses to commit after the managed worktree changes branches", async () => {
+  it("reopens an interrupted managed worktree without discarding changes", async () => {
+    const { repositoryRoot, managedRoot } = await repository();
+    const manager = new GitWorktreeManager();
+    const worktree = await manager.create("run_1234abcd", await manager.inspectRepository(repositoryRoot), managedRoot);
+    await writeFile(join(worktree.path, "unfinished.txt"), "preserve me\n");
+
+    await expect(manager.resume(worktree)).resolves.toEqual(worktree);
+    expect(await readFile(join(worktree.path, "unfinished.txt"), "utf8")).toBe("preserve me\n");
+  });
+
+  it("refuses to commit or resume after the managed worktree changes branches", async () => {
     const { repositoryRoot, managedRoot } = await repository();
     const manager = new GitWorktreeManager();
     const worktree = await manager.create("run_1234abcd", await manager.inspectRepository(repositoryRoot), managedRoot);
@@ -73,6 +83,7 @@ describe("Git worktree manager", () => {
     await writeFile(join(worktree.path, "result.txt"), "must not be committed\n");
     const headBefore = git(worktree.path, ["rev-parse", "HEAD"]);
 
+    await expect(manager.resume(worktree)).rejects.toThrow("branch identity changed");
     await expect(manager.commitReview(worktree, "scheduled result")).rejects.toThrow("branch identity changed");
 
     expect(git(worktree.path, ["rev-parse", "HEAD"])).toBe(headBefore);

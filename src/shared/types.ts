@@ -124,6 +124,7 @@ export interface RunRecord {
   readonly cycle: number;
   readonly totalCycles?: number;
   readonly activeMs?: number;
+  readonly budgetDeadlineAt?: string;
   readonly progressSignature?: string;
   readonly equivalentFailures?: number;
   readonly latestWorkerSummary?: string;

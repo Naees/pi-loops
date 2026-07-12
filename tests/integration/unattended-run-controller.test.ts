@@ -10,8 +10,9 @@ import type { RunRecord, ScheduleRecord } from "../../src/shared/types.js";
 import { acquireControllerWriterLock, releaseControllerWriterLock, repositoryWriterLeasePath, resolveRepositoryLockIdentity } from "../../src/storage/controller-writer-lock.js";
 import { acquireWriterLease, releaseWriterLease } from "../../src/storage/lease.js";
 import { RunStore, writerLeasePath } from "../../src/storage/run-store.js";
-import { DirtyRepositoryError, NonGitRepositoryError, WorktreeNeedsUserError } from "../../src/worker/git-worktree.js";
-import { WorkerInteractionRequiredError } from "../../src/worker/rpc-worker-manager.js";
+import { DirtyRepositoryError, NonGitRepositoryError, WorktreeNeedsUserError, type ManagedWorktree } from "../../src/worker/git-worktree.js";
+import { WorkerInteractionRequiredError, type WorkerLaunchSpec } from "../../src/worker/rpc-worker-manager.js";
+import type { ParentWorkerUi } from "../../src/ui/worker-ui-relay.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -79,6 +80,7 @@ function worktrees(projectRoot: string) {
       path: join(managedRoot, runId),
       baseCommit: repository.baseCommit,
     })),
+    resume: vi.fn(async (worktree: ManagedWorktree) => worktree),
     commitReview: vi.fn(async (managed: { branch: string }) => ({ branch: managed.branch, commit: "b".repeat(40), worktreeRemoved: false })),
     removeClean: vi.fn(async () => undefined),
   };
@@ -96,7 +98,7 @@ function workers() {
     runCycle: vi.fn(async (_message: string, _signal?: AbortSignal) => ({ lastAssistantText: "implemented", events: [] })),
     stop: vi.fn(async () => ({ code: 0, signal: null })),
   };
-  return { manager: { launch: vi.fn(async () => worker) }, worker };
+  return { manager: { launch: vi.fn(async (_spec: WorkerLaunchSpec, _ui: ParentWorkerUi) => worker) }, worker };
 }
 
 describe("unattended run controller", () => {
@@ -133,6 +135,14 @@ describe("unattended run controller", () => {
       .resolves.toEqual({ status: "interrupted" });
     expect(rpc.manager.launch).not.toHaveBeenCalled();
     expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "awaiting_user" }));
+
+    const initialized = spawnSync("git", ["init", "-q"], { cwd: projectRoot, encoding: "utf8", shell: false });
+    if (initialized.status !== 0) throw new Error(initialized.stderr);
+    git.inspectRepository.mockResolvedValue({ repositoryRoot: projectRoot, commonGitDirectory: join(projectRoot, ".git"), baseCommit: "a".repeat(40) });
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+      .resolves.toEqual({ status: "finished" });
+    expect(git.resume).not.toHaveBeenCalled();
+    expect(git.create).toHaveBeenCalledOnce();
   });
 
   it("pauses dirty repositories for user action without launching a worker", async () => {
@@ -214,6 +224,50 @@ describe("unattended run controller", () => {
     const lock = await acquireControllerWriterLock(dataRoot, { projectRoot, projectId }, 30_000, new Date(), join(dataRoot, "repository-locks"));
     await releaseControllerWriterLock(lock);
   }, 5_000);
+
+  it("restarts with the same run, worktree, session, deadline, and budget epoch", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const controller = new UnattendedRunController({
+      dataRoot,
+      repositoryLockRoot: join(dataRoot, "repository-locks"),
+      worktrees: git,
+      workers: rpc.manager,
+    });
+    const needsUser: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({
+        complete: false,
+        needsUser: true,
+        reason: "need guidance",
+        failedCriteria: ["guidance"],
+        feedback: null,
+      })),
+    };
+    await expect(controller.runSchedule(schedule, "run_1234abcd", needsUser, host, new AbortController().signal, "start"))
+      .resolves.toEqual({ status: "interrupted" });
+    const interrupted = await new RunStore(dataRoot, projectId).load("run_1234abcd");
+    expect(interrupted).toEqual(expect.objectContaining({ state: "awaiting_user", cycle: 1, budgetEpoch: 1 }));
+    const deadline = interrupted?.budgetDeadlineAt;
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+      .resolves.toEqual({ status: "finished" });
+
+    expect(git.create).toHaveBeenCalledOnce();
+    expect(git.resume).toHaveBeenCalledOnce();
+    expect(rpc.manager.launch).toHaveBeenCalledTimes(2);
+    expect(rpc.manager.launch.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      runId: "run_1234abcd",
+      resume: { sessionId: "session-id", sessionFile: "/tmp/session.jsonl" },
+    }));
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "completed",
+      runId: "run_1234abcd",
+      budgetEpoch: 1,
+      budgetDeadlineAt: deadline,
+      totalCycles: 2,
+    }));
+  });
 
   it("fails closed on an unhandled worker interaction", async () => {
     const { dataRoot, projectRoot, entries, host, schedule } = await harness();

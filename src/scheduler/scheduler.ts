@@ -2,13 +2,14 @@ import { DEFAULT_CONFIG } from "../config/config.js";
 import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
-import { createScheduleId } from "../shared/ids.js";
+import { createScheduleId, isRunId, isScheduleId } from "../shared/ids.js";
 import type { RunBudget, ScheduleRecord } from "../shared/types.js";
 import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
 import { ScheduleStore, scheduleLeasePath } from "../storage/schedule-store.js";
 import { createUniqueRunId, resolveBudget } from "../controller/attended-goal-support.js";
+import { isRecoverableRun } from "../controller/state-machine.js";
 import {
   completeScheduleOccurrence,
   interruptScheduleOccurrence,
@@ -16,7 +17,7 @@ import {
   triggerSchedule,
 } from "./coalescing.js";
 import { OccurrenceClaimManager, type OccurrenceClaims } from "./occurrence-claims.js";
-import { parseScheduleExpression, type ParsedScheduleExpression } from "./parser.js";
+import { nextRecurringFireAt, parseScheduleExpression, type ParsedScheduleExpression } from "./parser.js";
 
 const SCHEDULE_LEASE_STALE_MS = 30_000;
 const CLAIM_LEASE_STALE_MS = 30_000;
@@ -44,10 +45,13 @@ export interface ScheduleOccurrenceResult {
   readonly status: "finished" | "interrupted";
 }
 
+export type ScheduleOccurrenceKind = "start" | "restart";
+
 export type ScheduleOccurrenceRunner = (
   schedule: ScheduleRecord,
   runId: string,
   signal: AbortSignal,
+  kind: ScheduleOccurrenceKind,
 ) => Promise<ScheduleOccurrenceResult>;
 
 export interface SchedulerHost {
@@ -186,6 +190,63 @@ export class ScheduleController {
     occurrence.abort.abort();
     await occurrence.promise;
     return schedule.scheduleId;
+  }
+
+  async resumeOccurrence(scheduleId: string, runId: string, cwd: string): Promise<void> {
+    if (!isScheduleId(scheduleId)) throw new Error(`Invalid schedule ID: ${scheduleId}`);
+    if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
+    await this.#queue.run(async () => {
+      const binding = await resolveProjectBinding(cwd);
+      if (this.#binding?.projectId !== binding.projectId || !this.#runner || this.#stopping) {
+        throw new Error("Schedule controller is not running for this project");
+      }
+      const run = await new RunStore(this.#dataRoot, binding.projectId).load(runId);
+      if (!run || run.mode !== "scheduled" || run.scheduleId !== scheduleId ||
+        (!isRecoverableRun(run) && run.state !== "awaiting_user")) {
+        throw new Error(`Scheduled run is not resumable: ${runId}`);
+      }
+      const claims = await this.#occurrenceClaims.acquire(binding, scheduleId);
+      let transferred = false;
+      let resumed: ScheduleRecord | undefined;
+      try {
+        await this.#withMutableStore(binding, async (store) => {
+          const schedule = await store.load(scheduleId);
+          if (!schedule || schedule.state !== "paused" || schedule.pauseReason !== "interrupted") {
+            throw new Error(`Schedule is not resumable: ${scheduleId}`);
+          }
+          const mutable: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = {
+            ...schedule,
+            state: "running",
+            activeRunId: runId,
+            lastTriggeredAt: this.#now().toISOString(),
+            updatedAt: this.#now().toISOString(),
+          };
+          delete mutable.pauseReason;
+          delete mutable.pendingSince;
+          if (schedule.timing.kind === "recurring") {
+            mutable.nextFireAt = nextRecurringFireAt(schedule.timing.anchorAt, schedule.timing.intervalMs, this.#now());
+          } else {
+            delete mutable.nextFireAt;
+          }
+          resumed = mutable;
+          await store.save(mutable);
+        });
+        if (!resumed) throw new Error(`Schedule could not be resumed: ${scheduleId}`);
+        if (this.#beforeOccurrenceLaunch) await this.#beforeOccurrenceLaunch();
+        transferred = this.#launchOccurrence(resumed, runId, claims, "restart");
+        if (!transferred) {
+          await this.#retryScheduleLease(async () => this.#interruptUnlaunchedOccurrence(scheduleId, runId, claims), false);
+        }
+        await this.#armNextTimer();
+      } catch (error) {
+        if (resumed && !transferred) {
+          await this.#retryScheduleLease(async () => this.#interruptUnlaunchedOccurrence(scheduleId, runId, claims), false).catch(() => undefined);
+        }
+        throw error;
+      } finally {
+        if (!transferred) await this.#occurrenceClaims.release(claims).catch(() => undefined);
+      }
+    });
   }
 
   async delete(scheduleId: string, cwd: string): Promise<void> {
@@ -343,7 +404,12 @@ export class ScheduleController {
     });
   }
 
-  #launchOccurrence(schedule: ScheduleRecord, runId: string, claims: OccurrenceClaims): boolean {
+  #launchOccurrence(
+    schedule: ScheduleRecord,
+    runId: string,
+    claims: OccurrenceClaims,
+    kind: ScheduleOccurrenceKind = "start",
+  ): boolean {
     const runner = this.#runner;
     if (!runner || this.#stopping || claims.signal.aborted) return false;
     const abort = new AbortController();
@@ -354,7 +420,7 @@ export class ScheduleController {
       try {
         let result: ScheduleOccurrenceResult;
         try {
-          result = await runner(schedule, runId, abort.signal);
+          result = await runner(schedule, runId, abort.signal, kind);
         } catch (error) {
           result = { status: "interrupted" };
           if (!claims.signal.aborted) {

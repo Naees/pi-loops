@@ -126,6 +126,11 @@ describe("run store", () => {
     const incompleteWorker: { -readonly [Key in keyof NonNullable<RunRecord["worker"]>]: NonNullable<RunRecord["worker"]>[Key] } = { ...worker };
     delete incompleteWorker.reviewCommit;
     await expect(runs.save({ ...scheduled, worker: incompleteWorker })).rejects.toThrow("invalid shape");
+    await expect(runs.save({
+      ...scheduled,
+      worker: { ...worker, sessionId: "session-1" },
+    })).rejects.toThrow("invalid shape");
+    await expect(runs.save({ ...scheduled, budgetDeadlineAt: "not-a-date" })).rejects.toThrow("invalid shape");
   });
 
   it("evicts the least-recently accessed eligible records with no tombstone", async () => {

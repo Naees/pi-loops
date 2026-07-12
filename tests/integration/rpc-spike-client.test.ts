@@ -8,7 +8,7 @@ describe("RPC spike client bounds", () => {
     const client = new RpcSpikeClient(process.execPath, ["-e", program]);
 
     try {
-      await expect(client.waitFor(() => false, { timeoutMs: 10_000 })).rejects.toThrow("Retained RPC messages exceed 8388608 bytes");
+      await expect(client.waitFor(() => false, { timeoutMs: 10_000 })).rejects.toThrow("RPC worker retained events exceed 8388608 bytes");
       expect(client.messages.length).toBeLessThan(40);
     } finally {
       await client.stop();

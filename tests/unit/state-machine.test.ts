@@ -4,7 +4,7 @@ import { RUN_STATES, type RunRecord, type RunState } from "../../src/shared/type
 
 const expectedTransitions: Readonly<Record<RunState, readonly RunState[]>> = {
   configuring: ["preflight", "awaiting_user", "cancelled", "interrupted", "failed"],
-  preflight: ["queued", "starting", "awaiting_user", "cancelled", "interrupted", "failed"],
+  preflight: ["queued", "starting", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "failed"],
   queued: ["starting", "cancelled", "interrupted", "failed"],
   starting: ["running", "cancelled", "interrupted", "failed"],
   running: ["verifying", "awaiting_user", "cancelled", "interrupted", "budget_exhausted", "failed"],

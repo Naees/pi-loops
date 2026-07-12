@@ -3,10 +3,13 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { transitionRun } from "../../src/controller/state-machine.js";
 import { triggerSchedule } from "../../src/scheduler/coalescing.js";
 import { ScheduleController, type SchedulerHost } from "../../src/scheduler/scheduler.js";
 import { createProjectId } from "../../src/shared/ids.js";
+import type { RunRecord, ScheduleRecord } from "../../src/shared/types.js";
 import { acquireWriterLease, releaseWriterLease } from "../../src/storage/lease.js";
+import { RunStore, writerLeasePath } from "../../src/storage/run-store.js";
 import { ScheduleStore, scheduleClaimLeasePath, scheduleExecutionLeasePath, scheduleLeasePath } from "../../src/storage/schedule-store.js";
 
 const temporaryDirectories: string[] = [];
@@ -382,6 +385,78 @@ describe("schedule controller", () => {
       await controller.shutdown();
     }
   }, 8_000);
+
+  it("restarts an interrupted scheduled run with the same occurrence ID", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
+    const { controller, host, project, dataRoot } = await harness();
+    const projectRoot = await realpath(project);
+    const projectId = createProjectId(projectRoot);
+    const kinds: string[] = [];
+    const runner = vi.fn(async (schedule: ScheduleRecord, runId: string, _signal: AbortSignal, kind: "start" | "restart") => {
+      kinds.push(kind);
+      if (kind === "start") {
+        const createdAt = new Date(Date.now()).toISOString();
+        let run: RunRecord = {
+          schemaVersion: 1,
+          runId,
+          projectId,
+          scheduleId: schedule.scheduleId,
+          mode: "scheduled",
+          state: "configuring",
+          goal: schedule.goal,
+          constraints: schedule.constraints,
+          verifierCommands: schedule.verifierCommands,
+          budget: schedule.budget,
+          budgetEpoch: 1,
+          budgetHistory: [],
+          cycle: 1,
+          totalCycles: 1,
+          activeMs: 100,
+          budgetDeadlineAt: new Date(Date.now() + 60_000).toISOString(),
+          equivalentFailures: 0,
+          latestEvidence: [],
+          worker: {
+            repositoryRoot: projectRoot,
+            baseCommit: "a".repeat(40),
+            branch: `pi-loops/${runId}`,
+            worktreePath: join(dataRoot, "worktree"),
+            sessionDirectory: join(dataRoot, "sessions"),
+            sessionId: "session-1",
+            sessionFile: join(dataRoot, "sessions", "session.jsonl"),
+            worktreeRetained: true,
+          },
+          createdAt,
+          updatedAt: createdAt,
+          transitions: [],
+        };
+        run = transitionRun(run, "preflight", "preflight", new Date(Date.now() + 1));
+        run = transitionRun(run, "starting", "starting", new Date(Date.now() + 2));
+        run = transitionRun(run, "running", "running", new Date(Date.now() + 3));
+        run = transitionRun(run, "interrupted", "interrupted", new Date(Date.now() + 4));
+        const lease = await acquireWriterLease(writerLeasePath(dataRoot, projectId), 30_000);
+        try {
+          await new RunStore(dataRoot, projectId, lease).save(run);
+        } finally {
+          await releaseWriterLease(lease);
+        }
+        return { status: "interrupted" as const };
+      }
+      return { status: "finished" as const };
+    });
+    await controller.start(host, runner);
+    const schedule = await controller.create({ expression: "in 1m", goal: "restart me" }, host);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "interrupted" })));
+    const runId = runner.mock.calls[0]?.[1] as string;
+
+    await controller.resumeOccurrence(schedule.scheduleId, runId, host.cwd);
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "completed" })));
+
+    expect(kinds).toEqual(["start", "restart"]);
+    expect(runner.mock.calls[1]?.[1]).toBe(runId);
+    await controller.shutdown();
+  });
 
   it("keeps retrying after repeated schedule-lease contention", async () => {
     vi.useFakeTimers();

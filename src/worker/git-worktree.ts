@@ -177,6 +177,29 @@ export class GitWorktreeManager {
     return { runId, repositoryRoot: repository.repositoryRoot, branch, path: canonicalPath, baseCommit: repository.baseCommit };
   }
 
+  async resume(worktree: ManagedWorktree, signal?: AbortSignal): Promise<ManagedWorktree> {
+    if (!isRunId(worktree.runId) || worktree.branch !== `pi-loops/${worktree.runId}` || !/^[0-9a-f]{40,64}$/.test(worktree.baseCommit)) {
+      throw new WorktreeNeedsUserError("Stored managed worktree identity is invalid");
+    }
+    const canonicalRepositoryRoot = await realpath(worktree.repositoryRoot);
+    const canonicalPath = await realpath(worktree.path);
+    const actualRoot = await realpath(await runGit(["rev-parse", "--show-toplevel"], canonicalPath, signal));
+    if (actualRoot !== canonicalPath) throw new WorktreeNeedsUserError("Stored managed worktree path no longer identifies its worktree root");
+    const sourceCommon = await realpath(await runGit(["rev-parse", "--path-format=absolute", "--git-common-dir"], canonicalRepositoryRoot, signal));
+    const worktreeCommon = await realpath(await runGit(["rev-parse", "--path-format=absolute", "--git-common-dir"], canonicalPath, signal));
+    if (sourceCommon !== worktreeCommon) throw new WorktreeNeedsUserError("Stored managed worktree belongs to a different repository");
+    await this.#requireExpectedBranch({ ...worktree, repositoryRoot: canonicalRepositoryRoot, path: canonicalPath }, signal);
+    const head = await runGit(["rev-parse", "HEAD"], canonicalPath, signal);
+    const branchHead = await runGit(["rev-parse", `refs/heads/${worktree.branch}`], canonicalPath, signal);
+    if (head !== branchHead) throw new WorktreeNeedsUserError("Stored managed worktree branch HEAD changed unexpectedly");
+    try {
+      await runGit(["merge-base", "--is-ancestor", worktree.baseCommit, head], canonicalPath, signal);
+    } catch {
+      throw new WorktreeNeedsUserError("Stored managed worktree base commit is not an ancestor of its HEAD");
+    }
+    return { ...worktree, repositoryRoot: canonicalRepositoryRoot, path: canonicalPath };
+  }
+
   async commitReview(worktree: ManagedWorktree, commitMessage: string, signal?: AbortSignal): Promise<FinalizedReviewBranch> {
     await this.#requireExpectedBranch(worktree, signal);
     const status = await runGit(["status", "--porcelain=v1", "--untracked-files=normal"], worktree.path, signal);

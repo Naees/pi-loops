@@ -118,19 +118,24 @@ describe("Pi extension registration", () => {
     expect(appendEntry).toHaveBeenCalledWith("pi-loops.run", expect.objectContaining({ state: "cancelled" }));
   });
 
-  it("keeps scheduling commands behind the public phase gate", async () => {
+  it("normalizes and confirms schedules before persisting them", async () => {
     delete process.env.PI_LOOPS_CHILD;
     const { ctx, notifications } = await context();
+    ctx.ui.confirm = vi.fn(async () => true);
     const { api, registerCommand } = mockApi();
     piLoopsExtension(api);
     const command = registerCommand.mock.calls[0]?.[1] as { handler(args: string, context: ExtensionContext): Promise<void> };
 
-    await command.handler("schedule every 5m", ctx);
+    await command.handler("schedule every 5m -- run checks", ctx);
 
-    expect(notifications).toContainEqual({
-      message: "Pi Loops subcommand is planned for a later phase: schedule",
-      level: "warning",
-    });
+    expect(ctx.ui.confirm).toHaveBeenCalledWith(
+      "Create Pi Loops schedule?",
+      expect.stringContaining("When: every 5 minutes"),
+    );
+    expect(notifications.some(({ message, level }) => level === "info" && /^schedule_[0-9a-f]{8} created/.test(message))).toBe(true);
+    await command.handler("status", ctx);
+    expect(notifications.at(-1)?.message).toContain("Schedules:");
+    expect(notifications.at(-1)?.message).toContain("run checks");
   });
 
   it("suppresses the outer controller in child worker mode", () => {

@@ -84,8 +84,9 @@ function isStoredWorker(value: unknown, runId: string): boolean {
     value.branch === `pi-loops/${runId}` &&
     typeof value.worktreePath === "string" && isAbsolute(value.worktreePath) && Buffer.byteLength(value.worktreePath, "utf8") <= 16 * 1024 &&
     typeof value.sessionDirectory === "string" && isAbsolute(value.sessionDirectory) && Buffer.byteLength(value.sessionDirectory, "utf8") <= 16 * 1024 &&
-    (value.sessionId === undefined || (typeof value.sessionId === "string" && value.sessionId.length <= 128)) &&
+    (value.sessionId === undefined || (typeof value.sessionId === "string" && value.sessionId.trim().length > 0 && value.sessionId.length <= 128)) &&
     (value.sessionFile === undefined || (typeof value.sessionFile === "string" && isAbsolute(value.sessionFile) && Buffer.byteLength(value.sessionFile, "utf8") <= 16 * 1024)) &&
+    ((value.sessionId === undefined) === (value.sessionFile === undefined)) &&
     (value.childPid === undefined || isPositiveSafeInteger(value.childPid)) &&
     (value.ownershipToken === undefined || (typeof value.ownershipToken === "string" && value.ownershipToken.length <= 128)) &&
     (value.piVersion === undefined || (typeof value.piVersion === "string" && value.piVersion.length <= 64)) &&
@@ -143,6 +144,7 @@ function parseRunRecord(value: unknown): RunRecord {
       "cycle",
       "totalCycles",
       "activeMs",
+      "budgetDeadlineAt",
       "progressSignature",
       "equivalentFailures",
       "latestWorkerSummary",
@@ -182,6 +184,8 @@ function parseRunRecord(value: unknown): RunRecord {
     (value.cycle as number) < 0 ||
     (value.totalCycles !== undefined && (!Number.isSafeInteger(value.totalCycles) || (value.totalCycles as number) < 0)) ||
     (value.activeMs !== undefined && (!Number.isSafeInteger(value.activeMs) || (value.activeMs as number) < 0)) ||
+    (value.budgetDeadlineAt !== undefined && (typeof value.budgetDeadlineAt !== "string" ||
+      !Number.isFinite(Date.parse(value.budgetDeadlineAt)) || new Date(value.budgetDeadlineAt).toISOString() !== value.budgetDeadlineAt)) ||
     (value.progressSignature !== undefined && typeof value.progressSignature !== "string") ||
     (value.equivalentFailures !== undefined && (!Number.isSafeInteger(value.equivalentFailures) || (value.equivalentFailures as number) < 0)) ||
     (value.latestWorkerSummary !== undefined &&

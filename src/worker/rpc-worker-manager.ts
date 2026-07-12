@@ -23,7 +23,10 @@ export interface WorkerLaunchSpec {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly absoluteDeadlineMs: number;
-  readonly sessionFile?: string;
+  readonly resume?: {
+    readonly sessionId: string;
+    readonly sessionFile: string;
+  };
 }
 
 export interface WorkerIdentity {
@@ -114,6 +117,17 @@ export class RpcWorkerManager {
     const cwd = await realpath(spec.cwd);
     await mkdir(spec.sessionDirectory, { recursive: true, mode: 0o700 });
     const sessionDirectory = await realpath(spec.sessionDirectory);
+    let resumeSessionFile: string | undefined;
+    if (spec.resume) {
+      if (!spec.resume.sessionId || !isAbsolute(spec.resume.sessionFile)) throw new Error("RPC worker resume identity is invalid");
+      const metadata = await lstat(spec.resume.sessionFile);
+      if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("RPC worker resume session must be a regular non-symlink file");
+      resumeSessionFile = await realpath(spec.resume.sessionFile);
+      const resumeRelation = relative(sessionDirectory, resumeSessionFile);
+      if (resumeRelation.startsWith("..") || isAbsolute(resumeRelation) || resumeRelation === "") {
+        throw new Error("RPC worker resume session file escapes its managed session directory");
+      }
+    }
     const launch = await this.#resolveLaunch();
     if (launch.version !== SUPPORTED_PI_VERSION) {
       throw new Error(`Scheduled RPC writers require validated Pi ${SUPPORTED_PI_VERSION}; current Pi is ${launch.version}`);
@@ -124,7 +138,7 @@ export class RpcWorkerManager {
       "--mode", "rpc",
       "--extension", this.#extensionPath,
       "--session-dir", sessionDirectory,
-      ...(spec.sessionFile === undefined ? [] : ["--session", spec.sessionFile]),
+      ...(resumeSessionFile === undefined ? [] : ["--session", resumeSessionFile]),
     ];
     const client = new RpcWorkerClient({
       executable: launch.executable,
@@ -160,8 +174,8 @@ export class RpcWorkerManager {
       if (sessionRelation.startsWith("..") || isAbsolute(sessionRelation) || sessionRelation === "") {
         throw new Error("RPC worker session file escapes its managed session directory");
       }
-      if (spec.sessionFile !== undefined && sessionFile !== await realpath(spec.sessionFile)) {
-        throw new Error("RPC worker resumed a different session file");
+      if (spec.resume && (sessionFile !== resumeSessionFile || state.sessionId !== spec.resume.sessionId)) {
+        throw new Error("RPC worker resumed a different session identity");
       }
       return new ManagedRpcWorker({ 
         pid: client.pid,
