@@ -3,6 +3,7 @@ import { isAbsolute, join } from "node:path";
 import { createProjectId, isProjectId, isRunId, isTriggerId } from "../shared/ids.js";
 import { TRIGGER_STATES, type TriggerRecord, type TriggerSource, type TriggerState } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget } from "../shared/validation.js";
+import { isBoundedNonEmptyStringArray, isCanonicalIsoDate } from "./record-validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
 import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
@@ -11,15 +12,6 @@ const MAX_TRIGGER_RECORD_BYTES = 1024 * 1024;
 export const MAX_TRIGGER_DEFINITIONS = 50;
 const MIN_DEBOUNCE_MS = 100;
 const MAX_DEBOUNCE_MS = 60_000;
-
-function isIsoDate(value: unknown): value is string {
-  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
-}
-
-function isBoundedStringArray(value: unknown, maximumItems: number, maximumItemBytes: number): value is string[] {
-  return Array.isArray(value) && value.length <= maximumItems && value.every((item) =>
-    typeof item === "string" && item.trim().length > 0 && Buffer.byteLength(item, "utf8") <= maximumItemBytes);
-}
 
 function parseSource(value: unknown): TriggerSource | undefined {
   if (!isRecord(value) || typeof value.kind !== "string") return undefined;
@@ -37,7 +29,7 @@ function parseSource(value: unknown): TriggerSource | undefined {
 function hasCoherentState(record: Record<string, unknown>): boolean {
   const state = record.state as TriggerState;
   const hasActive = typeof record.activeRunId === "string" && isRunId(record.activeRunId);
-  const hasPending = isIsoDate(record.pendingSince);
+  const hasPending = isCanonicalIsoDate(record.pendingSince);
   if (state === "enabled" || state === "paused") return !hasActive && !hasPending;
   if (state === "running") return hasActive && !hasPending;
   return state === "pending_coalesced" && hasActive && hasPending;
@@ -71,14 +63,14 @@ export function parseTriggerRecord(value: unknown): TriggerRecord {
     typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || createProjectId(value.projectRoot) !== value.projectId ||
     typeof value.state !== "string" || !TRIGGER_STATES.includes(value.state as TriggerState) ||
     typeof value.goal !== "string" || value.goal.trim().length === 0 || Buffer.byteLength(value.goal, "utf8") > 16 * 1024 ||
-    !isBoundedStringArray(value.constraints, 50, 4 * 1024) ||
-    !isBoundedStringArray(value.verifierCommands, 20, 4 * 1024) ||
+    !isBoundedNonEmptyStringArray(value.constraints, 50, 4 * 1024) ||
+    !isBoundedNonEmptyStringArray(value.verifierCommands, 20, 4 * 1024) ||
     !isRunBudget(value.budget) || source === undefined ||
     (value.activeRunId !== undefined && (typeof value.activeRunId !== "string" || !isRunId(value.activeRunId))) ||
-    (value.pendingSince !== undefined && !isIsoDate(value.pendingSince)) ||
-    (value.lastTriggeredAt !== undefined && !isIsoDate(value.lastTriggeredAt)) ||
-    (value.lastCompletedAt !== undefined && !isIsoDate(value.lastCompletedAt)) ||
-    !isIsoDate(value.createdAt) || !isIsoDate(value.updatedAt) || !hasCoherentState(value)
+    (value.pendingSince !== undefined && !isCanonicalIsoDate(value.pendingSince)) ||
+    (value.lastTriggeredAt !== undefined && !isCanonicalIsoDate(value.lastTriggeredAt)) ||
+    (value.lastCompletedAt !== undefined && !isCanonicalIsoDate(value.lastCompletedAt)) ||
+    !isCanonicalIsoDate(value.createdAt) || !isCanonicalIsoDate(value.updatedAt) || !hasCoherentState(value)
   ) throw new Error("Trigger record has an invalid shape");
   return value as unknown as TriggerRecord;
 }

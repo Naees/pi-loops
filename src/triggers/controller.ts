@@ -4,9 +4,11 @@ import { resolveBudget, createUniqueRunId } from "../controller/attended-goal-su
 import { isResumableRun } from "../controller/state-machine.js";
 import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { errorMessage } from "../shared/errors.js";
+import { allocateUniqueId } from "../shared/id-allocation.js";
 import { createTriggerId, isRunId, isTriggerId } from "../shared/ids.js";
 import type { RunBudget, TriggerRecord } from "../shared/types.js";
-import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
+import { LeaseUnavailableError, type WriterLease } from "../storage/lease.js";
+import { withWriterLease } from "../storage/lease-scope.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
 import { MAX_TRIGGER_DEFINITIONS, TriggerStore, triggerLeasePath } from "../storage/trigger-store.js";
@@ -19,13 +21,11 @@ import {
   resumeTriggerOccurrence,
 } from "./coalescing.js";
 import { TriggerClaimManager } from "./claims.js";
+import { TriggerEventIngress } from "./event-ingress.js";
 import { FilesystemTriggerManager, resolveFilesystemTarget } from "./filesystem.js";
 
 const TRIGGER_LEASE_STALE_MS = 30_000;
 const CLAIM_LEASE_STALE_MS = 30_000;
-const EVENT_DEBOUNCE_MS = 250;
-const MAX_EVENT_IDS_PER_TRIGGER = 128;
-const MAX_EVENT_INGRESS = 64;
 
 export interface TriggerCreateRequest {
   readonly source:
@@ -57,12 +57,6 @@ interface ActiveOccurrence {
   readonly promise: Promise<void>;
 }
 
-interface EventIngress {
-  currentEventId: string | undefined;
-  pending: boolean;
-  pendingEventId: string | undefined;
-}
-
 export class TriggerController {
   readonly #dataRoot: string;
   readonly #now: () => Date;
@@ -71,9 +65,7 @@ export class TriggerController {
   readonly #queue = new AsyncSerialQueue();
   readonly #active = new Map<string, ActiveOccurrence>();
   readonly #pausing = new Set<string>();
-  readonly #eventWindows = new Map<string, { untilMs: number; coalesced: boolean }>();
-  readonly #eventIds = new Map<string, Set<string>>();
-  readonly #eventIngress = new Map<string, EventIngress>();
+  readonly #eventIngress: TriggerEventIngress;
   #binding: ProjectBinding | undefined;
   #runner: TriggerOccurrenceRunner | undefined;
   #host: TriggerHost | undefined;
@@ -86,6 +78,7 @@ export class TriggerController {
   } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
+    this.#eventIngress = new TriggerEventIngress(this.#now);
     this.#claims = new TriggerClaimManager({
       dataRoot: this.#dataRoot,
       staleMs: options.claimLeaseStaleMs ?? CLAIM_LEASE_STALE_MS,
@@ -144,7 +137,11 @@ export class TriggerController {
         }
         const record: TriggerRecord = {
           schemaVersion: 1,
-          triggerId: await this.#createUniqueTriggerId(store),
+          triggerId: await allocateUniqueId(
+            createTriggerId,
+            async (triggerId) => (await store.load(triggerId)) === undefined,
+            "Could not allocate a unique trigger ID",
+          ),
           projectId: binding.projectId,
           projectRoot: binding.projectRoot,
           state: "enabled",
@@ -178,50 +175,7 @@ export class TriggerController {
 
   async fireEvent(triggerId: string, cwd: string, eventId?: string): Promise<"started" | "coalesced" | "ignored"> {
     if (!isTriggerId(triggerId)) throw new Error(`Invalid trigger ID: ${triggerId}`);
-    const seen = this.#eventIds.get(triggerId);
-    if (eventId && seen?.has(eventId)) return "ignored";
-
-    const ingress = this.#eventIngress.get(triggerId);
-    if (ingress) {
-      if (eventId && (eventId === ingress.currentEventId || eventId === ingress.pendingEventId)) return "ignored";
-      const window = this.#eventWindows.get(triggerId);
-      if (ingress.pending || window?.coalesced) return "coalesced";
-      ingress.pending = true;
-      ingress.pendingEventId = eventId;
-      if (window) window.coalesced = true;
-      return "coalesced";
-    }
-
-    const nowMs = this.#now().getTime();
-    const window = this.#eventWindows.get(triggerId);
-    if (window && nowMs < window.untilMs) {
-      if (window.coalesced) return "coalesced";
-      window.coalesced = true;
-    } else {
-      this.#eventWindows.set(triggerId, { untilMs: nowMs + EVENT_DEBOUNCE_MS, coalesced: false });
-    }
-    if (this.#eventIngress.size >= MAX_EVENT_INGRESS) throw new Error("Pi Loops trigger event ingress is at capacity");
-
-    const admitted: EventIngress = { currentEventId: eventId, pending: false, pendingEventId: undefined };
-    this.#eventIngress.set(triggerId, admitted);
-    try {
-      const initial = await this.fire(triggerId, cwd, "event");
-      this.#rememberEventId(triggerId, eventId);
-      while (admitted.pending) {
-        const pendingEventId = admitted.pendingEventId;
-        admitted.pending = false;
-        admitted.currentEventId = pendingEventId;
-        admitted.pendingEventId = undefined;
-        await this.fire(triggerId, cwd, "event");
-        this.#rememberEventId(triggerId, pendingEventId);
-      }
-      return initial;
-    } catch (error) {
-      this.#eventWindows.delete(triggerId);
-      throw error;
-    } finally {
-      this.#eventIngress.delete(triggerId);
-    }
+    return this.#eventIngress.dispatch(triggerId, eventId, () => this.fire(triggerId, cwd, "event"));
   }
 
   async fire(triggerId: string, cwd: string, expectedSource?: "event"): Promise<"started" | "coalesced" | "ignored"> {
@@ -381,9 +335,7 @@ export class TriggerController {
         }
         await store.delete(triggerId);
       });
-      this.#eventWindows.delete(triggerId);
-      this.#eventIds.delete(triggerId);
-      this.#eventIngress.delete(triggerId);
+      this.#eventIngress.forget(triggerId);
       this.#watchers.remove(triggerId);
     });
   }
@@ -395,8 +347,6 @@ export class TriggerController {
     await Promise.allSettled([...this.#active.values()].map((occurrence) => occurrence.promise));
     await this.#queue.run(async () => {
       this.#active.clear();
-      this.#eventWindows.clear();
-      this.#eventIds.clear();
       this.#eventIngress.clear();
       this.#binding = undefined;
       this.#runner = undefined;
@@ -465,14 +415,6 @@ export class TriggerController {
     });
   }
 
-  #rememberEventId(triggerId: string, eventId: string | undefined): void {
-    if (!eventId) return;
-    const seen = this.#eventIds.get(triggerId) ?? new Set<string>();
-    seen.add(eventId);
-    if (seen.size > MAX_EVENT_IDS_PER_TRIGGER) seen.delete(seen.values().next().value as string);
-    this.#eventIds.set(triggerId, seen);
-  }
-
   async #coalesce(binding: ProjectBinding, triggerId: string): Promise<void> {
     await this.#withMutableStore(binding, async (store) => {
       const latest = await store.load(triggerId);
@@ -507,19 +449,12 @@ export class TriggerController {
   }
 
   async #withMutableStore<T>(binding: ProjectBinding, operation: (store: TriggerStore) => Promise<T>): Promise<T> {
-    const lease = await acquireWriterLease(triggerLeasePath(this.#dataRoot, binding.projectId), TRIGGER_LEASE_STALE_MS, this.#now());
-    try {
-      return await operation(new TriggerStore(this.#dataRoot, binding.projectId, lease));
-    } finally {
-      await releaseWriterLease(lease);
-    }
+    return withWriterLease(
+      triggerLeasePath(this.#dataRoot, binding.projectId),
+      TRIGGER_LEASE_STALE_MS,
+      this.#now(),
+      (lease) => operation(new TriggerStore(this.#dataRoot, binding.projectId, lease)),
+    );
   }
 
-  async #createUniqueTriggerId(store: TriggerStore): Promise<string> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const triggerId = createTriggerId();
-      if ((await store.load(triggerId)) === undefined) return triggerId;
-    }
-    throw new Error("Could not allocate a unique trigger ID");
-  }
 }

@@ -29,6 +29,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Separated extension command parsing and presentation, centralized record-file I/O and error normalization, and isolated scheduled restart preparation from execution.
 - Generalized unattended execution so scheduled and proactive writers share worktree isolation, RPC lifecycle, finite budgets, repository guards, and review-branch finalization.
 - Bounded event ingress, error notifications, filesystem watcher admission, JSON record reads, and per-project trigger definitions; coordinated shutdown now attempts every safety cleanup before reporting failures.
+- Split extension hosts, routing, trigger-event relay, trigger ingress, and unattended definition/restart logic into focused internal modules; centralized repeated ID allocation, lease scoping, and record validation.
 
 ### Fixed
 

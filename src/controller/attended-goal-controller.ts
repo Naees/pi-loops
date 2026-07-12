@@ -8,7 +8,8 @@ import { asError, errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunBudget, RunRecord, RunState } from "../shared/types.js";
 import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
-import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease } from "../storage/lease.js";
+import { LeaseUnavailableError } from "../storage/lease.js";
+import { withWriterLease } from "../storage/lease-scope.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore, writerLeasePath } from "../storage/run-store.js";
 import { DEFAULT_CONFIG } from "../config/config.js";
@@ -460,12 +461,12 @@ export class AttendedGoalController {
   }
 
   async #withMutableProjectStore<T>(projectId: string, operation: (store: RunStore) => Promise<T>): Promise<T> {
-    const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
-    try {
-      return await operation(new RunStore(this.#dataRoot, projectId, lease));
-    } finally {
-      await releaseWriterLease(lease);
-    }
+    return withWriterLease(
+      writerLeasePath(this.#dataRoot, projectId),
+      WRITER_LEASE_STALE_MS,
+      this.#now(),
+      (lease) => operation(new RunStore(this.#dataRoot, projectId, lease)),
+    );
   }
 
   #createActiveGoal(contract: CompletionContract, store: RunStore, writerLock: ControllerWriterLock, run: RunRecord): ActiveGoal {

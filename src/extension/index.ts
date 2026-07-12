@@ -8,75 +8,29 @@ import { resolveBudget } from "../controller/attended-goal-support.js";
 import { isResumableRun } from "../controller/state-machine.js";
 import { CurrentModelEvaluator } from "../evidence/evaluator.js";
 import { ScheduleController, type ScheduleCreateRequest } from "../scheduler/scheduler.js";
-import type { ScheduleRecord } from "../shared/types.js";
-import { UnattendedRunController, type UnattendedRunHost } from "../controller/unattended-run-controller.js";
+import type { RunRecord, ScheduleRecord } from "../shared/types.js";
+import { UnattendedRunController } from "../controller/unattended-run-controller.js";
 import { resolveProjectBinding } from "../contracts/project-binding.js";
 import { RunStore } from "../storage/run-store.js";
-import type { RunRecord } from "../shared/types.js";
 import { NoticeStore } from "../storage/notices.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { CHILD_MARKER_ENV, registerWorkerWatchdog } from "../worker/watchdog.js";
 import { TriggerController, type TriggerCreateRequest } from "../triggers/controller.js";
-import { parseTriggerEventPayload, TRIGGER_EVENT_NAME } from "../triggers/event-bus.js";
+import { TRIGGER_EVENT_NAME } from "../triggers/event-bus.js";
 import { resolveFilesystemTarget } from "../triggers/filesystem.js";
 import { errorMessage } from "../shared/errors.js";
 import { budgetFromTool, parseCommand, parseResumeValue, parseScheduleValue, parseWatchValue } from "./commands.js";
+import { createGoalHost, createUnattendedHost } from "./hosts.js";
 import { commandHelp, conciseRunEntry, formatScheduleStatus, formatTriggerStatus, lastAssistantText, toolResult } from "./presentation.js";
+import { routeStopWork, shutdownUnattendedControllers } from "./routing.js";
+import { registerTriggerEventRelay } from "./trigger-events.js";
+
+export { routeStopWork, shutdownUnattendedControllers } from "./routing.js";
 
 const TOOL_ACTIONS = ["goal", "schedule", "trigger", "status", "stop", "resume"] as const;
 
 export function toolProvenanceMatches(toolPath: string, extensionPath: string): boolean {
   return resolve(toolPath) === resolve(extensionPath);
-}
-
-export async function shutdownUnattendedControllers(options: {
-  readonly shutdownScheduler: () => Promise<void>;
-  readonly shutdownTriggers: () => Promise<void>;
-  readonly shutdownWorker: () => Promise<void>;
-  readonly interruptAttended: () => Promise<void>;
-}): Promise<void> {
-  const controllerResults = await Promise.allSettled([
-    Promise.resolve().then(options.shutdownScheduler),
-    Promise.resolve().then(options.shutdownTriggers),
-  ]);
-  const finalResults = await Promise.allSettled([
-    Promise.resolve().then(options.shutdownWorker),
-    Promise.resolve().then(options.interruptAttended),
-  ]);
-  const errors = [...controllerResults, ...finalResults]
-    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-    .map((result) => result.reason as unknown);
-  if (errors.length > 0) throw new AggregateError(errors, "One or more Pi Loops shutdown operations failed");
-}
-
-export async function routeStopWork(options: {
-  readonly requestedId?: string | undefined;
-  readonly activeRunId?: string | undefined;
-  readonly loadRun: (runId: string) => Promise<RunRecord | undefined>;
-  readonly stopSchedule: (id?: string) => Promise<string | undefined>;
-  readonly stopTrigger: (id?: string) => Promise<string | undefined>;
-  readonly stopGoal: (id?: string) => Promise<RunRecord | undefined>;
-}): Promise<
-  | { readonly kind: "schedule"; readonly id: string }
-  | { readonly kind: "trigger"; readonly id: string }
-  | { readonly kind: "goal"; readonly run: RunRecord | undefined }
-> {
-  if (!options.requestedId && options.activeRunId) {
-    const active = await options.loadRun(options.activeRunId);
-    if (active?.mode === "proactive") {
-      const id = await options.stopTrigger(active.runId);
-      if (id) return { kind: "trigger", id };
-    }
-    if (active?.mode === "scheduled") {
-      const id = await options.stopSchedule(active.runId);
-      if (id) return { kind: "schedule", id };
-    }
-  }
-  const scheduleId = await options.stopSchedule(options.requestedId);
-  if (scheduleId) return { kind: "schedule", id: scheduleId };
-  const triggerId = await options.stopTrigger(options.requestedId);
-  if (triggerId) return { kind: "trigger", id: triggerId };
-  return { kind: "goal", run: await options.stopGoal(options.requestedId) };
 }
 
 export default function piLoopsExtension(pi: ExtensionAPI): void {
@@ -86,77 +40,14 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   }
 
   const dataRoot = resolvePiLoopsDataRoot();
-  const controller = new AttendedGoalController({ dataRoot });
+  const goals = new AttendedGoalController({ dataRoot });
   const scheduler = new ScheduleController({ dataRoot });
   const triggers = new TriggerController({ dataRoot });
   const unattended = new UnattendedRunController({ dataRoot });
   const ownExtensionPath = resolve(fileURLToPath(import.meta.url));
   const noticeStore = new NoticeStore(dataRoot);
+  const triggerEvents = registerTriggerEventRelay(pi, triggers);
   let subagentNoticeShownThisProcess = false;
-  let triggerContext: ExtensionContext | undefined;
-  let lastTriggerEventErrorNoticeAt = Number.NEGATIVE_INFINITY;
-  let suppressedTriggerEventErrors = 0;
-  const notifyTriggerEventError = (ctx: ExtensionContext, message: string): void => {
-    const now = Date.now();
-    if (now - lastTriggerEventErrorNoticeAt < 1_000) {
-      suppressedTriggerEventErrors += 1;
-      return;
-    }
-    const suffix = suppressedTriggerEventErrors > 0 ? ` (${suppressedTriggerEventErrors} similar errors suppressed)` : "";
-    suppressedTriggerEventErrors = 0;
-    lastTriggerEventErrorNoticeAt = now;
-    ctx.ui.notify(`${message}${suffix}`, "error");
-  };
-  pi.events.on(TRIGGER_EVENT_NAME, (value) => {
-    const ctx = triggerContext;
-    if (!ctx) return;
-    try {
-      const payload = parseTriggerEventPayload(value);
-      void triggers.fireEvent(payload.triggerId, ctx.cwd, payload.eventId).catch((error: unknown) => {
-        notifyTriggerEventError(ctx, `Pi Loops trigger event failed: ${errorMessage(error)}`);
-      });
-    } catch (error) {
-      notifyTriggerEventError(ctx, `Pi Loops rejected trigger event: ${errorMessage(error)}`);
-    }
-  });
-
-  const host = (ctx: ExtensionContext): GoalLoopHost => ({
-    cwd: ctx.cwd,
-    isIdle: ctx.isIdle(),
-    sendWork(message, delivery) {
-      if (delivery === "followUp") pi.sendUserMessage(message, { deliverAs: "followUp" });
-      else pi.sendUserMessage(message);
-    },
-    notify(message, level) {
-      ctx.ui.notify(message, level);
-    },
-    appendRunEntry(run) {
-      pi.appendEntry("pi-loops.run", conciseRunEntry(run));
-    },
-    abortAgent() {
-      ctx.abort();
-    },
-    async selectRun(runs) {
-      if (!ctx.hasUI) return undefined;
-      const labels = runs.map((run) => `${run.runId}  ${run.state}  ${run.goal}`);
-      const selected = await ctx.ui.select("Resume which Pi Loops run?", labels);
-      return selected?.split(/\s+/, 1)[0];
-    },
-  });
-
-  const scheduledHost = (ctx: ExtensionContext): UnattendedRunHost => ({
-    cwd: ctx.cwd,
-    ui: {
-      hasUI: ctx.hasUI,
-      confirm: (title, message) => ctx.ui.confirm(title, message),
-      select: (title, options) => ctx.ui.select(title, [...options]),
-      input: (title, placeholder) => ctx.ui.input(title, placeholder),
-      editor: (title, prefill) => ctx.ui.editor(title, prefill),
-      notify: (message, level) => ctx.ui.notify(message, level),
-    },
-    notify: (message, level) => ctx.ui.notify(message, level),
-    appendRunEntry: (run) => pi.appendEntry("pi-loops.run", conciseRunEntry(run)),
-  });
 
   const createSchedule = async (request: ScheduleCreateRequest, ctx: ExtensionContext): Promise<ScheduleRecord> => {
     if (!ctx.hasUI) throw new Error("Schedule creation requires interactive confirmation");
@@ -238,7 +129,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   };
 
   const combinedStatus = async (ctx: ExtensionContext, goalHost: GoalLoopHost): Promise<string> => {
-    const attended = await controller.status(goalHost);
+    const attended = await goals.status(goalHost);
     const schedules = await scheduleStatus(ctx);
     const proactive = await triggerStatus(ctx);
     return [attended, schedules, proactive].filter(Boolean).join("\n");
@@ -250,7 +141,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     loadRun: (id) => storedRun(ctx, id),
     stopSchedule: (id) => scheduler.stop(id, ctx.cwd),
     stopTrigger: (id) => triggers.stop(id, ctx.cwd),
-    stopGoal: (id) => controller.stop(id, goalHost),
+    stopGoal: (id) => goals.stop(id, goalHost),
   });
 
   const recommendSubagentsOnce = async (ctx: ExtensionContext): Promise<void> => {
@@ -284,7 +175,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
       await triggers.resumeOccurrence(unattendedRun.triggerId, unattendedRun.runId, ctx.cwd);
       return { kind: "trigger" as const, run: unattendedRun };
     }
-    return { kind: "goal" as const, run: await controller.resume(request, goalHost) };
+    return { kind: "goal" as const, run: await goals.resume(request, goalHost) };
   };
 
   pi.registerCommand("loops", {
@@ -292,11 +183,11 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       try {
         const parsed = parseCommand(args);
-        const commandHost = host(ctx);
+        const commandHost = createGoalHost(pi, ctx);
         switch (parsed.action) {
           case "goal":
             await recommendSubagentsOnce(ctx);
-            await controller.start({ goal: parsed.value }, commandHost);
+            await goals.start({ goal: parsed.value }, commandHost);
             break;
           case "schedule": {
             const request = parseScheduleValue(parsed.value);
@@ -322,7 +213,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             break;
           }
           case "clean": {
-            const evicted = await controller.clean(commandHost);
+            const evicted = await goals.clean(commandHost);
             ctx.ui.notify(evicted.length === 0 ? "No terminal run records were eligible for cleanup." : `Deleted ${evicted.length} run record(s): ${evicted.join(", ")}`, "info");
             break;
           }
@@ -348,7 +239,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
                 const trigger = (await triggers.list(ctx.cwd)).find((item) => item.triggerId === run.triggerId);
                 if (trigger?.activeRunId === run.runId) throw new Error(`Stop the active proactive run before deleting it: ${run.runId}`);
               }
-              await controller.delete(parsed.value, commandHost);
+              await goals.delete(parsed.value, commandHost);
             }
             ctx.ui.notify(`Deleted Pi Loops runtime data for ${parsed.value}.`, "info");
             break;
@@ -390,7 +281,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
       maxActiveMinutes: Type.Optional(Type.Integer({ minimum: 1, description: "Finite active-time limit in minutes" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const toolHost = host(ctx);
+      const toolHost = createGoalHost(pi, ctx);
       switch (params.action) {
         case "goal": {
           if (!params.goal?.trim()) throw new Error("pi_loops goal requires a non-empty goal");
@@ -401,7 +292,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             ...(params.constraints === undefined ? {} : { constraints: params.constraints }),
             ...budgetFromTool(params),
           };
-          const run = await controller.start(request, toolHost);
+          const run = await goals.start(request, toolHost);
           return toolResult(`${run.runId} started`, run);
         }
         case "schedule": {
@@ -433,7 +324,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
         case "status":
           return {
             content: [{ type: "text", text: await combinedStatus(ctx, toolHost) }],
-            details: { activeRunId: controller.activeRunId },
+            details: { activeRunId: goals.activeRunId },
           };
         case "stop": {
           const stopped = await stopWork(params.runId, ctx, toolHost);
@@ -466,7 +357,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    triggerContext = undefined;
+    triggerEvents.deactivate();
     const effectiveTool = pi.getAllTools().find((tool) => tool.name === "pi_loops");
     if (!effectiveTool) {
       ctx.ui.notify("Pi Loops tool registration is unavailable in this session.", "error");
@@ -484,7 +375,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
       );
     }
     try {
-      for (const run of await controller.reconcile(ctx.cwd)) {
+      for (const run of await goals.reconcile(ctx.cwd)) {
         pi.appendEntry("pi-loops.run", conciseRunEntry(run));
         ctx.ui.notify(`${run.runId}: interrupted — recovered stale active state after startup`, "warning");
       }
@@ -497,7 +388,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
           schedule,
           runId,
           new CurrentModelEvaluator(ctx),
-          scheduledHost(ctx),
+          createUnattendedHost(pi, ctx),
           signal,
           kind,
         ));
@@ -511,19 +402,19 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
           trigger,
           runId,
           new CurrentModelEvaluator(ctx),
-          scheduledHost(ctx),
+          createUnattendedHost(pi, ctx),
           signal,
           kind,
         ),
       );
-      triggerContext = ctx;
+      triggerEvents.activate(ctx);
     } catch (error) {
       ctx.ui.notify(`Pi Loops trigger startup failed: ${errorMessage(error)}`, "error");
     }
   });
 
   pi.on("tool_result", async (event) => {
-    controller.recordToolResult({
+    goals.recordToolResult({
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       input: event.input,
@@ -533,17 +424,17 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
-    if (!controller.activeRunId) return;
-    await controller.settle(lastAssistantText(ctx), new CurrentModelEvaluator(ctx), host(ctx));
+    if (!goals.activeRunId) return;
+    await goals.settle(lastAssistantText(ctx), new CurrentModelEvaluator(ctx), createGoalHost(pi, ctx));
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    triggerContext = undefined;
+    triggerEvents.deactivate();
     await shutdownUnattendedControllers({
       shutdownScheduler: () => scheduler.shutdown(),
       shutdownTriggers: () => triggers.shutdown(),
       shutdownWorker: () => unattended.shutdown(),
-      interruptAttended: () => controller.interrupt(host(ctx)),
+      interruptAttended: () => goals.interrupt(createGoalHost(pi, ctx)),
     });
   });
 }

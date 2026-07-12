@@ -6,7 +6,7 @@ import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evalua
 import { recordRpcToolEvidence } from "../evidence/rpc-collector.js";
 import { errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
-import type { RunBudget, RunRecord, RunState, ScheduleRecord, TriggerRecord } from "../shared/types.js";
+import type { RunRecord, RunState, ScheduleRecord, TriggerRecord } from "../shared/types.js";
 import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
 import { LeaseUnavailableError } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
@@ -25,50 +25,22 @@ import { RpcWorkerManager, WorkerInteractionRequiredError, type WorkerCycleResul
 import { EMPTY_BUDGET_LEDGER, currentActiveMs, exhaustionReason, incrementCycle, pauseActiveTime, startActiveTime, type BudgetLedger } from "./budgets.js";
 import { abortableDelay, boundedRecordText, buildWorkMessage, deterministicFailureDecision } from "./attended-goal-support.js";
 import { EMPTY_PROGRESS_TRACKER, createFailureSignature, isStalled, recordFailure, type ProgressTracker } from "./no-progress.js";
-import { canTransition, isResumableRun, transitionRun } from "./state-machine.js";
+import { canTransition, transitionRun } from "./state-machine.js";
+import {
+  createUnattendedRun,
+  isSafeUnattendedRestart,
+  prepareUnattendedRestart,
+  scheduleDefinition,
+  triggerDefinition,
+  unattendedLabel,
+  type UnattendedDefinition,
+} from "./unattended-definition.js";
 import type { ScheduleOccurrenceKind, ScheduleOccurrenceResult } from "../scheduler/scheduler.js";
-
-const WRITER_LEASE_STALE_MS = 30_000;
-const WRITER_RETRY_MS = 1_000;
 
 type UnattendedOccurrenceKind = ScheduleOccurrenceKind;
 
-interface UnattendedDefinition {
-  readonly mode: "scheduled" | "proactive";
-  readonly sourceId: string;
-  readonly projectId: string;
-  readonly projectRoot: string;
-  readonly goal: string;
-  readonly constraints: readonly string[];
-  readonly verifierCommands: readonly string[];
-  readonly budget: RunBudget;
-}
-
-function scheduleDefinition(schedule: ScheduleRecord): UnattendedDefinition {
-  return {
-    mode: "scheduled",
-    sourceId: schedule.scheduleId,
-    projectId: schedule.projectId,
-    projectRoot: schedule.projectRoot,
-    goal: schedule.goal,
-    constraints: schedule.constraints,
-    verifierCommands: schedule.verifierCommands,
-    budget: schedule.budget,
-  };
-}
-
-function triggerDefinition(trigger: TriggerRecord): UnattendedDefinition {
-  return {
-    mode: "proactive",
-    sourceId: trigger.triggerId,
-    projectId: trigger.projectId,
-    projectRoot: trigger.projectRoot,
-    goal: trigger.goal,
-    constraints: trigger.constraints,
-    verifierCommands: trigger.verifierCommands,
-    budget: trigger.budget,
-  };
-}
+const WRITER_LEASE_STALE_MS = 30_000;
+const WRITER_RETRY_MS = 1_000;
 
 function processExists(pid: number): boolean {
   try {
@@ -77,17 +49,6 @@ function processExists(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
-}
-
-function sameStringList(left: readonly string[] | undefined, right: readonly string[]): boolean {
-  const resolvedLeft = left ?? [];
-  return resolvedLeft.length === right.length && resolvedLeft.every((value, index) => value === right[index]);
-}
-
-function sameBudget(left: RunRecord["budget"], right: ScheduleRecord["budget"]): boolean {
-  return left.maxActiveMs === right.maxActiveMs &&
-    left.maxCycles === right.maxCycles &&
-    left.stallThreshold === right.stallThreshold;
 }
 
 interface WorktreeOperations {
@@ -191,8 +152,8 @@ export class UnattendedRunController {
       throw new Error(`${definition.mode === "scheduled" ? "Schedule" : "Trigger"} is bound to a different project`);
     }
 
-    const workKind = definition.mode === "scheduled" ? "scheduled" : "proactive";
-    const workLabel = definition.mode === "scheduled" ? "Scheduled" : "Proactive";
+    const workKind = definition.mode;
+    const workLabel = unattendedLabel(definition);
     let writerLock: ControllerWriterLock | undefined;
     let worker: WorkerOperations | undefined;
     let lockAbortHandler: (() => void) | undefined;
@@ -465,38 +426,17 @@ export class UnattendedRunController {
     kind: UnattendedOccurrenceKind,
   ): Promise<RunRecord> {
     const existing = await store.load(runId);
-    const label = definition.mode === "scheduled" ? "Scheduled" : "Proactive";
+    const label = unattendedLabel(definition);
     if (kind === "start") {
       if (existing) throw new Error(`${label} run already exists: ${runId}`);
       return this.#createRun(store, binding, definition, runId);
     }
     if (!existing) throw new Error(`${label} run does not exist: ${runId}`);
-    if (!this.#isSafeRestart(existing, definition)) {
+    if (!isSafeUnattendedRestart(existing, definition)) {
       throw new Error(`${label} run is not safely resumable: ${runId}`);
     }
 
-    const resumed: { -readonly [Key in keyof RunRecord]: RunRecord[Key] } = { ...existing };
-    delete resumed.terminalReason;
-    delete resumed.failureRecoverable;
-    if (existing.state === "stalled" || existing.state === "budget_exhausted") {
-      resumed.budgetEpoch = (existing.budgetEpoch ?? 1) + 1;
-      resumed.budgetHistory = [
-        ...(existing.budgetHistory ?? []),
-        {
-          epoch: existing.budgetEpoch ?? 1,
-          budget: existing.budget,
-          cycles: existing.cycle,
-          activeMs: existing.activeMs ?? 0,
-          endedAt: this.#now().toISOString(),
-          reason: existing.terminalReason ?? existing.state,
-        },
-      ];
-      resumed.cycle = 0;
-      resumed.activeMs = 0;
-      resumed.equivalentFailures = 0;
-      delete resumed.progressSignature;
-      delete resumed.budgetDeadlineAt;
-    }
+    const resumed = prepareUnattendedRestart(existing, this.#now());
     return this.#move(store, resumed, "preflight", `${label} run restart preflight started`);
   }
 
@@ -506,49 +446,10 @@ export class UnattendedRunController {
     definition: UnattendedDefinition,
     runId: string,
   ): Promise<RunRecord> {
-    const createdAt = this.#now().toISOString();
-    const created: RunRecord = {
-      schemaVersion: 1,
-      runId,
-      projectId: binding.projectId,
-      ...(definition.mode === "scheduled" ? { scheduleId: definition.sourceId } : { triggerId: definition.sourceId }),
-      mode: definition.mode,
-      state: "configuring",
-      goal: definition.goal,
-      constraints: definition.constraints,
-      verifierCommands: definition.verifierCommands,
-      budget: definition.budget,
-      budgetEpoch: 1,
-      budgetHistory: [],
-      cycle: 0,
-      totalCycles: 0,
-      activeMs: 0,
-      equivalentFailures: 0,
-      latestEvidence: [],
-      createdAt,
-      updatedAt: createdAt,
-      transitions: [],
-    };
+    const created = createUnattendedRun(binding, definition, runId, this.#now().toISOString());
     await store.save(created);
-    const label = definition.mode === "scheduled" ? "Scheduled" : "Proactive";
+    const label = unattendedLabel(definition);
     return this.#move(store, created, "preflight", `${label} writer preflight started`);
-  }
-
-  #isSafeRestart(run: RunRecord, definition: UnattendedDefinition): boolean {
-    const awaitingPreflightRetry = run.state === "awaiting_user" && run.worker === undefined;
-    const resumableWorker = run.worker?.worktreeRetained === true && run.worker.reviewCommit === undefined &&
-      Boolean(run.worker.sessionFile && run.worker.sessionId && run.budgetDeadlineAt);
-    const sourceMatches = definition.mode === "scheduled"
-      ? run.scheduleId === definition.sourceId && run.triggerId === undefined
-      : run.triggerId === definition.sourceId && run.scheduleId === undefined;
-    return run.mode === definition.mode &&
-      sourceMatches &&
-      run.goal === definition.goal &&
-      sameStringList(run.constraints, definition.constraints) &&
-      sameStringList(run.verifierCommands, definition.verifierCommands) &&
-      sameBudget(run.budget, definition.budget) &&
-      isResumableRun(run) &&
-      (awaitingPreflightRetry || resumableWorker);
   }
 
   async #waitForWriterLock(binding: ProjectBinding, signal: AbortSignal): Promise<ControllerWriterLock> {

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { allocateUniqueId } from "../../src/shared/id-allocation.js";
 import { createProjectId, createRunId, createScheduleId, createTriggerId, isRunId, isScheduleId, isTriggerId } from "../../src/shared/ids.js";
 
 describe("public identifiers", () => {
@@ -12,6 +13,16 @@ describe("public identifiers", () => {
     expect(isTriggerId(triggerId)).toBe(true);
     expect(isRunId(scheduleId)).toBe(false);
     expect(isScheduleId(triggerId)).toBe(false);
+  });
+
+  it("allocates the first available generated ID with a finite retry bound", async () => {
+    const createId = vi.fn()
+      .mockReturnValueOnce("run_00000001")
+      .mockReturnValueOnce("run_00000002");
+    await expect(allocateUniqueId(createId, async (id) => id.endsWith("2"), "allocation failed"))
+      .resolves.toBe("run_00000002");
+    await expect(allocateUniqueId(() => "occupied", async () => false, "allocation failed"))
+      .rejects.toThrow("allocation failed");
   });
 
   it("creates a stable project ID from the canonical root", () => {

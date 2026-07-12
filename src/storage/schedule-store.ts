@@ -10,6 +10,7 @@ import {
   type ScheduleTiming,
 } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget } from "../shared/validation.js";
+import { isBoundedNonEmptyStringArray, isCanonicalIsoDate } from "./record-validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
 import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
@@ -17,23 +18,13 @@ import { assertWriterLease, type WriterLease } from "./lease.js";
 const MAX_SCHEDULE_RECORD_BYTES = 1024 * 1024;
 const PAUSE_REASONS: readonly SchedulePauseReason[] = ["completed", "missed", "interrupted", "user"];
 
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return false;
-  return new Date(value).toISOString() === value;
-}
-
-function isStringArray(value: unknown, maximumItems: number, maximumItemBytes: number): value is string[] {
-  return Array.isArray(value) && value.length <= maximumItems && value.every((item) =>
-    typeof item === "string" && item.trim().length > 0 && Buffer.byteLength(item, "utf8") <= maximumItemBytes);
-}
-
 function parseTiming(value: unknown): ScheduleTiming | undefined {
   if (!isRecord(value) || typeof value.kind !== "string") return undefined;
-  if (value.kind === "once" && hasOnlyKeys(value, ["kind", "fireAt"]) && isIsoDate(value.fireAt)) {
+  if (value.kind === "once" && hasOnlyKeys(value, ["kind", "fireAt"]) && isCanonicalIsoDate(value.fireAt)) {
     return value as unknown as ScheduleTiming;
   }
   if (value.kind === "recurring" && hasOnlyKeys(value, ["kind", "intervalMs", "anchorAt"]) &&
-    isPositiveSafeInteger(value.intervalMs) && value.intervalMs >= DEFAULT_CONFIG.scheduling.minimumRecurringMs && isIsoDate(value.anchorAt)) {
+    isPositiveSafeInteger(value.intervalMs) && value.intervalMs >= DEFAULT_CONFIG.scheduling.minimumRecurringMs && isCanonicalIsoDate(value.anchorAt)) {
     return value as unknown as ScheduleTiming;
   }
   return undefined;
@@ -42,8 +33,8 @@ function parseTiming(value: unknown): ScheduleTiming | undefined {
 function hasCoherentState(record: Record<string, unknown>, timing: ScheduleTiming): boolean {
   const state = record.state as ScheduleState;
   const hasActive = typeof record.activeRunId === "string" && isRunId(record.activeRunId);
-  const hasPending = isIsoDate(record.pendingSince);
-  const hasNext = isIsoDate(record.nextFireAt);
+  const hasPending = isCanonicalIsoDate(record.pendingSince);
+  const hasNext = isCanonicalIsoDate(record.nextFireAt);
   const hasPause = typeof record.pauseReason === "string" && PAUSE_REASONS.includes(record.pauseReason as SchedulePauseReason);
 
   const timingMatches = timing.kind === "once"
@@ -93,19 +84,19 @@ export function parseScheduleRecord(value: unknown): ScheduleRecord {
     typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || createProjectId(value.projectRoot) !== value.projectId ||
     typeof value.state !== "string" || !SCHEDULE_STATES.includes(value.state as ScheduleState) ||
     typeof value.goal !== "string" || value.goal.trim().length === 0 || Buffer.byteLength(value.goal, "utf8") > 16 * 1024 ||
-    !isStringArray(value.constraints, 50, 4 * 1024) ||
-    !isStringArray(value.verifierCommands, 20, 4 * 1024) ||
+    !isBoundedNonEmptyStringArray(value.constraints, 50, 4 * 1024) ||
+    !isBoundedNonEmptyStringArray(value.verifierCommands, 20, 4 * 1024) ||
     !isRunBudget(value.budget) ||
     typeof value.expression !== "string" || value.expression.trim().length === 0 || Buffer.byteLength(value.expression, "utf8") > 4 * 1024 ||
     typeof value.normalizedExpression !== "string" || value.normalizedExpression.trim().length === 0 || Buffer.byteLength(value.normalizedExpression, "utf8") > 8 * 1024 ||
     timing === undefined ||
-    (value.nextFireAt !== undefined && !isIsoDate(value.nextFireAt)) ||
+    (value.nextFireAt !== undefined && !isCanonicalIsoDate(value.nextFireAt)) ||
     (value.activeRunId !== undefined && (typeof value.activeRunId !== "string" || !isRunId(value.activeRunId))) ||
-    (value.pendingSince !== undefined && !isIsoDate(value.pendingSince)) ||
-    (value.lastTriggeredAt !== undefined && !isIsoDate(value.lastTriggeredAt)) ||
-    (value.lastCompletedAt !== undefined && !isIsoDate(value.lastCompletedAt)) ||
+    (value.pendingSince !== undefined && !isCanonicalIsoDate(value.pendingSince)) ||
+    (value.lastTriggeredAt !== undefined && !isCanonicalIsoDate(value.lastTriggeredAt)) ||
+    (value.lastCompletedAt !== undefined && !isCanonicalIsoDate(value.lastCompletedAt)) ||
     (value.pauseReason !== undefined && (typeof value.pauseReason !== "string" || !PAUSE_REASONS.includes(value.pauseReason as SchedulePauseReason))) ||
-    !isIsoDate(value.createdAt) || !isIsoDate(value.updatedAt) ||
+    !isCanonicalIsoDate(value.createdAt) || !isCanonicalIsoDate(value.updatedAt) ||
     !hasCoherentState(value, timing)
   ) {
     throw new Error("Schedule record has an invalid shape");

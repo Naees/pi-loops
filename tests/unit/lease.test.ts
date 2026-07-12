@@ -12,6 +12,7 @@ import {
   releaseWriterLease,
   releaseWriterLeases,
 } from "../../src/storage/lease.js";
+import { withWriterLease } from "../../src/storage/lease-scope.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -39,6 +40,16 @@ describe("writer leases", () => {
     const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     expect(rejected?.reason).toBeInstanceOf(LeaseUnavailableError);
     if (acquired) await releaseWriterLease(acquired.value);
+  });
+
+  it("scopes lease ownership to an operation and releases after failure", async () => {
+    const path = await leasePath();
+    await expect(withWriterLease(path, 5_000, new Date(), async (lease) => {
+      await expect(assertWriterLease(lease)).resolves.toBeUndefined();
+      throw new Error("operation failed");
+    })).rejects.toThrow("operation failed");
+    const nextLease = await acquireWriterLease(path, 5_000);
+    await releaseWriterLease(nextLease);
   });
 
   it("releases only through the active matching lease handle", async () => {

@@ -3,9 +3,11 @@ import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { errorMessage } from "../shared/errors.js";
 import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
+import { allocateUniqueId } from "../shared/id-allocation.js";
 import { createScheduleId, isRunId, isScheduleId } from "../shared/ids.js";
 import type { RunBudget, ScheduleRecord } from "../shared/types.js";
-import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
+import { LeaseUnavailableError } from "../storage/lease.js";
+import { withWriterLease } from "../storage/lease-scope.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
 import { ScheduleStore, scheduleLeasePath } from "../storage/schedule-store.js";
@@ -141,7 +143,11 @@ export class ScheduleController {
       const schedule = await this.#withMutableStore(binding, async (store) => {
         const record: ScheduleRecord = {
           schemaVersion: 1,
-          scheduleId: await this.#createUniqueScheduleId(store),
+          scheduleId: await allocateUniqueId(
+            createScheduleId,
+            async (scheduleId) => (await store.load(scheduleId)) === undefined,
+            "Could not allocate a unique schedule ID",
+          ),
           projectId: binding.projectId,
           projectRoot: binding.projectRoot,
           state: "enabled",
@@ -562,21 +568,12 @@ export class ScheduleController {
   }
 
   async #withMutableStore<T>(binding: ProjectBinding, operation: (store: ScheduleStore) => Promise<T>): Promise<T> {
-    let lease: WriterLease | undefined;
-    try {
-      lease = await acquireWriterLease(scheduleLeasePath(this.#dataRoot, binding.projectId), SCHEDULE_LEASE_STALE_MS, this.#now());
-      return await operation(new ScheduleStore(this.#dataRoot, binding.projectId, lease));
-    } finally {
-      if (lease) await releaseWriterLease(lease);
-    }
-  }
-
-  async #createUniqueScheduleId(store: ScheduleStore): Promise<string> {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const scheduleId = createScheduleId();
-      if ((await store.load(scheduleId)) === undefined) return scheduleId;
-    }
-    throw new Error("Could not allocate a unique schedule ID");
+    return withWriterLease(
+      scheduleLeasePath(this.#dataRoot, binding.projectId),
+      SCHEDULE_LEASE_STALE_MS,
+      this.#now(),
+      (lease) => operation(new ScheduleStore(this.#dataRoot, binding.projectId, lease)),
+    );
   }
 
 }

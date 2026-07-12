@@ -2,6 +2,7 @@ import type { CompletionContract } from "../contracts/completion-contract.js";
 import type { VerifierEvidence } from "../evidence/collector.js";
 import { createDeterministicFailureDecision, type EvaluationDecision } from "../evidence/evaluator.js";
 import { DEFAULT_CONFIG } from "../config/config.js";
+import { allocateUniqueId } from "../shared/id-allocation.js";
 import { createRunId } from "../shared/ids.js";
 import { truncateUtf8 } from "../shared/text.js";
 import type { RunBudget, RunRecord } from "../shared/types.js";
@@ -24,11 +25,11 @@ export function abortableDelay(ms: number, signal: AbortSignal, abortMessage = "
 }
 
 export async function createUniqueRunId(store: RunStore): Promise<string> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const runId = createRunId();
-    if ((await store.load(runId)) === undefined) return runId;
-  }
-  throw new Error("Could not allocate a unique run ID");
+  return await allocateUniqueId(
+    createRunId,
+    async (runId) => (await store.load(runId)) === undefined,
+    "Could not allocate a unique run ID",
+  );
 }
 
 export function resolveBudget(override: Partial<RunBudget> | undefined): RunBudget {
