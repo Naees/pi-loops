@@ -41,7 +41,6 @@ export interface GoalLoopHost {
 
 interface ActiveGoal {
   readonly generation: number;
-  readonly projectRoot: string;
   readonly contract: CompletionContract;
   readonly store: RunStore;
   readonly lease: WriterLease;
@@ -124,20 +123,7 @@ export class AttendedGoalController {
         run = transitionRun(run, "running", "First attended work cycle started", this.#now());
         await store.save(run);
 
-        const active: ActiveGoal = {
-          generation: ++this.#generation,
-          projectRoot,
-          contract,
-          store,
-          lease,
-          collector: new CycleEvidenceCollector(),
-          evaluatorAbort: new AbortController(),
-          run,
-          ledger: startActiveTime(EMPTY_BUDGET_LEDGER, this.#now().getTime()),
-          progress: EMPTY_PROGRESS_TRACKER,
-          stopRequested: false,
-          deadlineTimer: undefined,
-        };
+        const active = this.#createActiveGoal(contract, store, lease, run);
         this.#active = active;
         this.#armDeadline(active, host);
         host.appendRunEntry(run);
@@ -145,8 +131,7 @@ export class AttendedGoalController {
         host.sendWork(buildWorkMessage(active.run, active.contract, undefined), host.isIdle ? "immediate" : "followUp");
         return run;
       } catch (error) {
-        if (this.#active?.lease === lease) this.#active = undefined;
-        await releaseWriterLease(lease).catch(() => undefined);
+        await this.#discardFailedActivation(lease);
         throw error;
       }
     });
@@ -349,20 +334,7 @@ export class AttendedGoalController {
         await store.save(run);
 
         const contract = createCompletionContract(run.goal, run.verifierCommands, run.constraints);
-        const active: ActiveGoal = {
-          generation: ++this.#generation,
-          projectRoot,
-          contract,
-          store,
-          lease,
-          collector: new CycleEvidenceCollector(),
-          evaluatorAbort: new AbortController(),
-          run,
-          ledger: startActiveTime(EMPTY_BUDGET_LEDGER, this.#now().getTime()),
-          progress: EMPTY_PROGRESS_TRACKER,
-          stopRequested: false,
-          deadlineTimer: undefined,
-        };
+        const active = this.#createActiveGoal(contract, store, lease, run);
         this.#active = active;
         this.#armDeadline(active, host);
         host.appendRunEntry(run);
@@ -370,8 +342,7 @@ export class AttendedGoalController {
         host.sendWork(buildWorkMessage(active.run, active.contract, request.guidance ?? run.latestEvaluation?.feedback ?? undefined), host.isIdle ? "immediate" : "followUp");
         return run;
       } catch (error) {
-        if (this.#active?.lease === lease) this.#active = undefined;
-        await releaseWriterLease(lease).catch(() => undefined);
+        await this.#discardFailedActivation(lease);
         throw error;
       }
     });
@@ -479,6 +450,31 @@ export class AttendedGoalController {
     return { lease, store: new RunStore(this.#dataRoot, projectId, lease) };
   }
 
+  #createActiveGoal(contract: CompletionContract, store: RunStore, lease: WriterLease, run: RunRecord): ActiveGoal {
+    return {
+      generation: ++this.#generation,
+      contract,
+      store,
+      lease,
+      collector: new CycleEvidenceCollector(),
+      evaluatorAbort: new AbortController(),
+      run,
+      ledger: startActiveTime(EMPTY_BUDGET_LEDGER, this.#now().getTime()),
+      progress: EMPTY_PROGRESS_TRACKER,
+      stopRequested: false,
+      deadlineTimer: undefined,
+    };
+  }
+
+  async #discardFailedActivation(lease: WriterLease): Promise<void> {
+    const active = this.#active?.lease === lease ? this.#active : undefined;
+    if (active) {
+      await this.#close(active).catch(() => undefined);
+      return;
+    }
+    await releaseWriterLease(lease).catch(() => undefined);
+  }
+
   async #move(active: ActiveGoal, to: RunState, reason: string): Promise<void> {
     active.run = transitionRun(this.#snapshot(active), to, reason, this.#now());
     await active.store.save(active.run);
@@ -489,28 +485,37 @@ export class AttendedGoalController {
     const snapshot = this.#snapshot(active);
     active.run = transitionRun(snapshot, state, reason, this.#now());
     active.run = { ...active.run, terminalReason: reason };
-    await active.store.save(active.run);
-    host.appendRunEntry(active.run);
-    host.notify(`${active.run.runId}: ${state} — ${reason}`, state === "completed" ? "info" : "warning");
-    await active.store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible);
-    await this.#close(active);
+    try {
+      await active.store.save(active.run);
+      host.appendRunEntry(active.run);
+      host.notify(`${active.run.runId}: ${state} — ${reason}`, state === "completed" ? "info" : "warning");
+      await active.store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible);
+    } finally {
+      await this.#close(active);
+    }
   }
 
   async #fail(active: ActiveGoal, reason: string, recoverable: boolean, host: GoalLoopHost): Promise<void> {
     active.ledger = pauseActiveTime(active.ledger, this.#now().getTime());
     active.run = transitionRun(this.#snapshot(active), "failed", reason, this.#now(), { failureRecoverable: recoverable });
-    await active.store.save(active.run);
-    host.appendRunEntry(active.run);
-    host.notify(`${active.run.runId}: failed — ${reason}`, "error");
-    await active.store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible);
-    await this.#close(active);
+    try {
+      await active.store.save(active.run);
+      host.appendRunEntry(active.run);
+      host.notify(`${active.run.runId}: failed — ${reason}`, "error");
+      await active.store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible);
+    } finally {
+      await this.#close(active);
+    }
   }
 
   async #close(active: ActiveGoal): Promise<void> {
     if (active.deadlineTimer !== undefined) clearTimeout(active.deadlineTimer);
     active.deadlineTimer = undefined;
-    await releaseWriterLease(active.lease);
-    if (this.#active?.generation === active.generation) this.#active = undefined;
+    try {
+      await releaseWriterLease(active.lease);
+    } finally {
+      if (this.#active?.generation === active.generation) this.#active = undefined;
+    }
   }
 
   #armDeadline(active: ActiveGoal, host: GoalLoopHost): void {

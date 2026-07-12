@@ -3,6 +3,7 @@ import type { VerifierEvidence } from "../evidence/collector.js";
 import type { EvaluationDecision } from "../evidence/evaluator.js";
 import { DEFAULT_CONFIG } from "../config/config.js";
 import { createRunId } from "../shared/ids.js";
+import { truncateUtf8 } from "../shared/text.js";
 import type { RunBudget, RunRecord } from "../shared/types.js";
 import type { RunStore } from "../storage/run-store.js";
 
@@ -39,13 +40,7 @@ export function resolveBudget(override: Partial<RunBudget> | undefined): RunBudg
 }
 
 export function boundedRecordText(value: string, maxBytes: number): string {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.byteLength <= maxBytes) return value;
-  const marker = "\n[truncated by Pi Loops]";
-  const contentBudget = maxBytes - Buffer.byteLength(marker, "utf8");
-  let truncated = bytes.subarray(0, Math.max(0, contentBudget)).toString("utf8");
-  while (Buffer.byteLength(truncated + marker, "utf8") > maxBytes) truncated = truncated.slice(0, -1);
-  return truncated + marker;
+  return truncateUtf8(value, maxBytes);
 }
 
 export function deterministicFailureDecision(evidence: readonly VerifierEvidence[]): EvaluationDecision {

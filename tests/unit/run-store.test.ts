@@ -88,6 +88,15 @@ describe("run store", () => {
     expect((await runs.load("run_00000002"))?.state).toBe("completed");
   });
 
+  it.each([
+    { complete: false, needsUser: false, reason: "", failedCriteria: [], feedback: null },
+    { complete: true, needsUser: true, reason: "done", failedCriteria: [], feedback: null },
+    { complete: true, needsUser: false, reason: "done", failedCriteria: ["tests"], feedback: null },
+  ])("rejects contradictory stored evaluations: %j", async (latestEvaluation) => {
+    const runs = await store();
+    await expect(runs.save({ ...run(1), latestEvaluation })).rejects.toThrow("invalid shape");
+  });
+
   it("evicts complete eligible records with no tombstone", async () => {
     const runs = await store();
     for (let index = 1; index <= 4; index += 1) await runs.save(run(index, "completed"));

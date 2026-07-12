@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { findForbiddenPackagePaths } from "./package-boundary.mjs";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-loops-packed-"));
 
@@ -77,9 +78,7 @@ try {
   const report = JSON.parse(pack.stdout)[0];
   if (!report?.filename || !Array.isArray(report.files)) throw new Error("npm pack returned an invalid report");
 
-  const forbidden = report.files
-    .map((file) => file.path)
-    .filter((path) => path.startsWith(".project-design/") || path.startsWith(".pi-subagents/") || path.startsWith("tests/"));
+  const forbidden = findForbiddenPackagePaths(report.files);
   if (forbidden.length > 0) throw new Error(`Packed forbidden files: ${forbidden.join(", ")}`);
 
   const tarball = join(temporaryRoot, report.filename);

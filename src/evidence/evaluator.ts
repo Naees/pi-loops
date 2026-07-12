@@ -1,5 +1,6 @@
 import { complete, type UserMessage } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateUtf8 } from "../shared/text.js";
 
 export interface EvaluationInput {
   readonly goal: string;
@@ -49,27 +50,17 @@ Return exactly one JSON object with this shape:
 {"complete":boolean,"needsUser":boolean,"reason":string,"failedCriteria":string[],"feedback":string|null}
 Do not include markdown, commentary, or tool calls.`;
 
-function boundedText(value: string, maxBytes = MAX_EVALUATOR_TEXT_BYTES): string {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.byteLength <= maxBytes) return value;
-  const marker = "\n[truncated by Pi Loops]";
-  const contentBudget = maxBytes - Buffer.byteLength(marker, "utf8");
-  let truncated = bytes.subarray(0, Math.max(0, contentBudget)).toString("utf8");
-  while (Buffer.byteLength(truncated + marker, "utf8") > maxBytes) truncated = truncated.slice(0, -1);
-  return truncated + marker;
-}
-
 function boundedEvaluationInput(input: EvaluationInput): EvaluationInput {
   return {
-    goal: boundedText(input.goal),
-    constraints: input.constraints.slice(0, 50).map((constraint) => boundedText(constraint, 4 * 1024)),
-    workerSummary: boundedText(input.workerSummary),
+    goal: truncateUtf8(input.goal, MAX_EVALUATOR_TEXT_BYTES),
+    constraints: input.constraints.slice(0, 50).map((constraint) => truncateUtf8(constraint, 4 * 1024)),
+    workerSummary: truncateUtf8(input.workerSummary, MAX_EVALUATOR_TEXT_BYTES),
     verifierEvidence: input.verifierEvidence.slice(0, 20).map((evidence) => ({
-      criterion: boundedText(evidence.criterion, 4 * 1024),
+      criterion: truncateUtf8(evidence.criterion, 4 * 1024),
       passed: evidence.passed,
-      summary: boundedText(evidence.summary, 8 * 1024),
+      summary: truncateUtf8(evidence.summary, 8 * 1024),
     })),
-    ...(input.previousFeedback === undefined ? {} : { previousFeedback: boundedText(input.previousFeedback, 8 * 1024) }),
+    ...(input.previousFeedback === undefined ? {} : { previousFeedback: truncateUtf8(input.previousFeedback, 8 * 1024) }),
   };
 }
 

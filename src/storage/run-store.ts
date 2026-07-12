@@ -70,11 +70,13 @@ function isStoredEvaluation(value: unknown): boolean {
   return (
     typeof value.complete === "boolean" &&
     typeof value.needsUser === "boolean" &&
-    typeof value.reason === "string" && Buffer.byteLength(value.reason, "utf8") <= 8 * 1024 &&
+    typeof value.reason === "string" && value.reason.trim().length > 0 && Buffer.byteLength(value.reason, "utf8") <= 8 * 1024 &&
     isStringArray(value.failedCriteria) && value.failedCriteria.length <= 50 &&
     value.failedCriteria.every((criterion) => Buffer.byteLength(criterion, "utf8") <= 4 * 1024) &&
     (typeof value.feedback === "string" || value.feedback === null) &&
-    (typeof value.feedback !== "string" || Buffer.byteLength(value.feedback, "utf8") <= 16 * 1024)
+    (typeof value.feedback !== "string" || Buffer.byteLength(value.feedback, "utf8") <= 16 * 1024) &&
+    !(value.complete && value.needsUser) &&
+    !(value.complete && value.failedCriteria.length > 0)
   );
 }
 

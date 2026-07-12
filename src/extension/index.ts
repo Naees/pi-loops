@@ -150,7 +150,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             ...budgetFromTool(params),
           };
           const run = await controller.start(request, toolHost);
-          return toolResult(`${run.runId} started`, run, true);
+          return toolResult(`${run.runId} started`, run);
         }
         case "status":
           return {
@@ -159,7 +159,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
           };
         case "stop": {
           const stopped = await controller.stop(params.runId, toolHost);
-          return toolResult(stopped ? `${stopped.runId} cancelled` : "No attended goal loop is active", stopped, true);
+          return toolResult(stopped ? `${stopped.runId} cancelled` : "No attended goal loop is active", stopped);
         }
         case "resume": {
           await recommendSubagentsOnce(ctx);
@@ -169,7 +169,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             ...budgetFromTool(params),
           };
           const run = await controller.resume(request, toolHost);
-          return toolResult(`${run.runId} resumed`, run, true);
+          return toolResult(`${run.runId} resumed`, run);
         }
       }
     },
@@ -276,11 +276,11 @@ function lastAssistantText(ctx: ExtensionContext): string {
   return "The worker did not surface an assistant summary in this cycle.";
 }
 
-function toolResult(text: string, run: RunRecord | undefined, terminate: boolean) {
+function toolResult(text: string, run: RunRecord | undefined) {
   return {
     content: [{ type: "text" as const, text }],
     details: run ? conciseRunEntry(run) : {},
-    terminate,
+    terminate: true,
   };
 }
 

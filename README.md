@@ -218,18 +218,11 @@ Code will be reviewed and refactored between every phase rather than postponing 
 
 Pi packages execute with the user's system permissions. Review package source before installation.
 
-The planned implementation includes:
+The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Scheduled child launch remains blocked until lifecycle validation proves no shell interpolation, bounded process output, and reliable descendant cleanup.
 
-- No shell interpolation for child launch.
-- Strict JSONL RPC parsing.
-- Bounded process output.
-- Atomic state writes and ownership-token leases.
-- Child recursion guards and independent deadlines.
-- No stored API keys or environment snapshots.
-- No automatic permission approval or branch merge.
-- A final comprehensive vulnerability and supply-chain assessment.
+Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. A comprehensive vulnerability and supply-chain assessment remains required before release.
 
-Security issues should eventually be reported through the process documented in `SECURITY.md` once that policy is added.
+Report security issues through the private process documented in [`SECURITY.md`](SECURITY.md).
 
 ## Project status
 

@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttendedGoalController, type GoalLoopHost } from "../../src/controller/attended-goal-controller.js";
 import type { CompletionEvaluator, EvaluationDecision, EvaluationInput } from "../../src/evidence/evaluator.js";
 import type { RunRecord } from "../../src/shared/types.js";
+import { RunStore } from "../../src/storage/run-store.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -68,9 +70,11 @@ const rejected: EvaluationDecision = {
   feedback: "Continue implementation.",
 };
 
+let verifierCallSequence = 0;
+
 function recordVerifier(controller: AttendedGoalController, passed: boolean): void {
   controller.recordToolResult({
-    toolCallId: `call-${Math.random()}`,
+    toolCallId: `call-${++verifierCallSequence}`,
     toolName: "bash",
     input: { command: "npm test" },
     content: [{ type: "text", text: passed ? "all tests passed" : "2 tests failed" }],
@@ -211,6 +215,52 @@ describe("attended goal controller", () => {
     expect(controller.activeRunId).toBeUndefined();
     expect(host.abortAgent).toHaveBeenCalledOnce();
     expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+  });
+
+  it("discards active state when startup host callbacks fail", async () => {
+    const { controller, host } = await harness();
+    const appendRunEntry = vi.spyOn(host, "appendRunEntry").mockImplementation(() => {
+      throw new Error("transcript unavailable");
+    });
+
+    await expect(controller.start({ goal: "finish" }, host)).rejects.toThrow("transcript unavailable");
+    expect(controller.activeRunId).toBeUndefined();
+
+    appendRunEntry.mockRestore();
+    const restarted = await controller.start({ goal: "start another run" }, host);
+    await controller.stop(restarted.runId, host);
+  });
+
+  it("releases the writer lease when terminal host callbacks fail", async () => {
+    const { controller, host } = await harness();
+    await controller.start({ goal: "finish" }, host);
+    const appendRunEntry = vi.spyOn(host, "appendRunEntry").mockImplementation(() => {
+      throw new Error("transcript unavailable");
+    });
+
+    await expect(controller.settle("Finished.", new SequenceEvaluator([accepted]), host)).rejects.toThrow("transcript unavailable");
+    expect(controller.activeRunId).toBeUndefined();
+
+    appendRunEntry.mockRestore();
+    const restarted = await controller.start({ goal: "start another run" }, host);
+    await controller.stop(restarted.runId, host);
+  });
+
+  it("releases the writer lease when terminal persistence fails", async () => {
+    const { controller, host } = await harness();
+    await controller.start({ goal: "finish" }, host);
+    const originalSave = RunStore.prototype.save;
+    const save = vi.spyOn(RunStore.prototype, "save").mockImplementation(function (this: RunStore, run: RunRecord) {
+      if (run.state === "completed") return Promise.reject(new Error("storage unavailable"));
+      return originalSave.call(this, run);
+    });
+
+    await expect(controller.settle("Finished.", new SequenceEvaluator([accepted]), host)).rejects.toThrow("storage unavailable");
+    expect(controller.activeRunId).toBeUndefined();
+
+    save.mockRestore();
+    const restarted = await controller.start({ goal: "start another run" }, host);
+    await controller.stop(restarted.runId, host);
   });
 
   it("resumes an interrupted run with a new budget epoch", async () => {

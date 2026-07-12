@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { findForbiddenPackagePaths } from "./package-boundary.mjs";
 
 const result = spawnSync("npm", ["pack", "--dry-run", "--json"], {
   encoding: "utf8",
@@ -19,12 +20,7 @@ if (!report || !Array.isArray(report.files)) {
 }
 
 const paths = report.files.map((file) => file.path);
-const forbidden = paths.filter((path) =>
-  path.startsWith(".project-design/") ||
-  path.startsWith(".pi-subagents/") ||
-  path.startsWith("tests/") ||
-  path.startsWith("coverage/")
-);
+const forbidden = findForbiddenPackagePaths(paths);
 
 if (forbidden.length > 0) {
   throw new Error(`Forbidden npm package files:\n${forbidden.join("\n")}`);
