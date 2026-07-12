@@ -17,6 +17,8 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Attended goal loops with `/loops` and `pi_loops` goal, status, stop, resume, clean, and delete behavior.
 - Deterministic verifier collection, fresh completion evaluation, hard active-time limits, budget epochs, interruption recovery, and real-session E2E validation.
 - Packaged `pi-loops` skill for natural-language attended-goal activation.
+- Deterministic macOS RPC lifecycle spike covering settlement, streaming/tool aborts, parent death, descendant cleanup, session/worktree resume, and UI relay.
+- Fail-closed current-Pi launch resolution for Node CLI and standalone executable layouts without PATH search.
 
 ### Changed
 
@@ -26,3 +28,4 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 - Terminal attended runs now release their writer lease even if persistence, transcript, or notification callbacks fail.
 - Stored evaluator decisions now enforce the same semantic invariants as fresh evaluator responses.
+- An armed child-watchdog termination escalation is no longer disarmed during session shutdown.

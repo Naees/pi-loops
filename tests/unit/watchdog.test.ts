@@ -56,6 +56,8 @@ describe("child watchdog", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(context.abort).toHaveBeenCalledOnce();
     expect(context.shutdown).toHaveBeenCalledOnce();
+
+    await handlers.get("session_shutdown")?.({}, context);
     await vi.advanceTimersByTimeAsync(100);
     expect(terminateSelf).toHaveBeenCalledOnce();
   });

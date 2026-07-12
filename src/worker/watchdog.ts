@@ -28,13 +28,12 @@ export function registerWorkerWatchdog(pi: ExtensionAPI, options: WorkerWatchdog
 
   const deadlineMs = parseChildDeadline(environment[CHILD_DEADLINE_ENV], now());
   let deadlineTimer: NodeJS.Timeout | undefined;
-  let terminationTimer: NodeJS.Timeout | undefined;
 
   const stop = (ctx: Pick<ExtensionContext, "abort" | "shutdown" | "ui">, message: string): void => {
     ctx.ui.notify(message, "warning");
     ctx.abort();
     ctx.shutdown();
-    terminationTimer = setTimeout(terminateSelf, gracefulShutdownMs);
+    setTimeout(terminateSelf, gracefulShutdownMs);
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -56,8 +55,6 @@ export function registerWorkerWatchdog(pi: ExtensionAPI, options: WorkerWatchdog
 
   pi.on("session_shutdown", async () => {
     if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
-    if (terminationTimer !== undefined) clearTimeout(terminationTimer);
     deadlineTimer = undefined;
-    terminationTimer = undefined;
   });
 }
