@@ -206,11 +206,19 @@ No project configuration file will be created automatically.
 
 ### Phase 4 — Production hardening
 
-- Compatibility matrix.
-- State migrations.
+- State migrations and compatibility hardening.
 - Comprehensive security audit.
 - Supply-chain and package-content review.
-- Clean-install release validation.
+- Release automation and clean-install release candidates.
+
+### Phase 5 — Linux and Windows qualification
+
+- Complete the Linux and Windows portability pass after feature development is finished.
+- Run packed runtime, process-tree cleanup, Git isolation, locking, recovery, and upgrade tests on native Linux and Windows CI runners or VMs.
+- Enable and document each operating system only after its complete qualification matrix passes.
+- Perform the final clean-install and publication gate after cross-platform qualification.
+
+Physical devices are not required; native CI runners or VMs provide the required operating-system evidence. Until Phase 5 passes, unattended scheduling remains enabled only on the already validated macOS/Pi 0.80.6 combination.
 
 Code will be reviewed and refactored between every phase rather than postponing cleanup until the end.
 
@@ -226,7 +234,7 @@ Report security issues through the private process documented in [`SECURITY.md`]
 
 ## Project status
 
-The product contract and architecture are approved. Attended goals and macOS scheduling are implemented and under validation. Proactive triggers and final production hardening remain incomplete; no public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended goals and macOS scheduling are implemented. Proactive triggers, final production hardening, and Linux/Windows qualification remain incomplete; no public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 

@@ -927,11 +927,21 @@ Deliver filesystem triggers, shared event-bus contract, model-facing triggers, v
 
 Exit when trigger storms cannot overlap writers, hostile payload tests pass, and no vendor integration has entered core.
 
-### Phase 4 — Production hardening and release
+### Phase 4 — Production hardening
 
-Deliver compatibility testing, migrations, budget calibration, comprehensive security audit, public docs, release automation, and `.project-design/` removal.
+Deliver state migrations, budget calibration, comprehensive security audit, public docs, release automation, and clean-install release candidates. Cross-platform code paths may be prepared here, but the existing macOS-only unattended-runtime gate remains fail-closed.
 
-Exit when CI and real-session tests pass, no critical/high security findings remain, the tarball contains only intended files, clean installation passes, and npm publishing access is confirmed.
+Exit when feature development is complete, no critical/high security findings remain, the release-candidate tarball contains only intended files, clean installation passes on the validated macOS baseline, and no known design blocker prevents native Linux or Windows qualification.
+
+### Phase 5 — Linux and Windows qualification and release
+
+After all feature development and Phase 4 hardening are complete, deliver the final portability pass and native runtime qualification for Linux and Windows. Native CI runners or VMs are sufficient; dedicated physical devices are not required.
+
+Test each operating system independently with packed installation, real Pi RPC lifecycle, process-tree cancellation and forced parent death, executable resolution, user-global repository locking, Git worktree isolation, restart/session recovery, schedule and trigger execution, state migration, clean uninstall, and release-candidate installation. Run supported Node and Pi compatibility combinations and repeat race- and cleanup-sensitive tests.
+
+Keep each platform disabled and unclaimed until its complete matrix passes. A platform may be enabled independently after passing; a failure on one platform must not weaken the fail-closed gate on another.
+
+Exit when the Linux and Windows matrices pass on native environments, macOS remains green, no critical/high portability or security finding remains, `.project-design/` is removed, final clean installation passes, and npm publishing access is confirmed.
 
 Each phase includes readability, duplication, architecture, documentation, and security review before the next begins.
 
@@ -1004,6 +1014,7 @@ Validated during design on 2026-07-12 against Pi `0.80.6` and Node `25.1.0`. Pi 
 - **D-034:** Leave unattended output on review branches; never auto-merge.
 - **D-035:** Dirty/non-Git projects block unattended writing, not attended/read-only work.
 - **D-036:** Supervise children with RPC abort, deadlines, escalation, recursion guard, and startup reconciliation.
+- **D-037:** Defer Linux and Windows support claims and native qualification to a final Phase 5 after feature development and production hardening; CI runners or VMs are acceptable evidence, and platform gates remain fail-closed until each matrix passes.
 
 ### Assumptions requiring validation
 
