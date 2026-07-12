@@ -1,0 +1,60 @@
+{
+  "name": "@naees/pi-loops",
+  "version": "0.1.0",
+  "description": "Bounded goal, schedule, and proactive loops for Pi",
+  "type": "module",
+  "license": "MIT",
+  "author": "Naees",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Naees/pi-loops.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Naees/pi-loops/issues"
+  },
+  "homepage": "https://github.com/Naees/pi-loops#readme",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "coding-agent",
+    "loops",
+    "loop-engineering"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension/index.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test",
+    "pack:inspect": "node scripts/inspect-pack.mjs",
+    "spike:rpc": "node scripts/spike-rpc-worker.ts",
+    "release:check": "node scripts/release-check.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.80.6",
+    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@types/node": "24.12.4",
+    "typebox": "1.1.38",
+    "typescript": "5.9.3",
+    "vitest": "4.1.9"
+  }
+}
