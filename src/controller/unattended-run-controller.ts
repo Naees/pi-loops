@@ -6,7 +6,7 @@ import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evalua
 import { recordRpcToolEvidence } from "../evidence/rpc-collector.js";
 import { errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
-import type { RunRecord, RunState, ScheduleRecord } from "../shared/types.js";
+import type { RunBudget, RunRecord, RunState, ScheduleRecord, TriggerRecord } from "../shared/types.js";
 import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
 import { LeaseUnavailableError } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
@@ -30,6 +30,45 @@ import type { ScheduleOccurrenceKind, ScheduleOccurrenceResult } from "../schedu
 
 const WRITER_LEASE_STALE_MS = 30_000;
 const WRITER_RETRY_MS = 1_000;
+
+type UnattendedOccurrenceKind = ScheduleOccurrenceKind;
+
+interface UnattendedDefinition {
+  readonly mode: "scheduled" | "proactive";
+  readonly sourceId: string;
+  readonly projectId: string;
+  readonly projectRoot: string;
+  readonly goal: string;
+  readonly constraints: readonly string[];
+  readonly verifierCommands: readonly string[];
+  readonly budget: RunBudget;
+}
+
+function scheduleDefinition(schedule: ScheduleRecord): UnattendedDefinition {
+  return {
+    mode: "scheduled",
+    sourceId: schedule.scheduleId,
+    projectId: schedule.projectId,
+    projectRoot: schedule.projectRoot,
+    goal: schedule.goal,
+    constraints: schedule.constraints,
+    verifierCommands: schedule.verifierCommands,
+    budget: schedule.budget,
+  };
+}
+
+function triggerDefinition(trigger: TriggerRecord): UnattendedDefinition {
+  return {
+    mode: "proactive",
+    sourceId: trigger.triggerId,
+    projectId: trigger.projectId,
+    projectRoot: trigger.projectRoot,
+    goal: trigger.goal,
+    constraints: trigger.constraints,
+    verifierCommands: trigger.verifierCommands,
+    budget: trigger.budget,
+  };
+}
 
 function processExists(pid: number): boolean {
   try {
@@ -116,7 +155,7 @@ export class UnattendedRunController {
     return this.#activeRunId;
   }
 
-  async runSchedule(
+  runSchedule(
     schedule: ScheduleRecord,
     runId: string,
     evaluator: CompletionEvaluator,
@@ -124,13 +163,36 @@ export class UnattendedRunController {
     signal: AbortSignal,
     kind: ScheduleOccurrenceKind = "start",
   ): Promise<ScheduleOccurrenceResult> {
+    return this.#runUnattended(scheduleDefinition(schedule), runId, evaluator, host, signal, kind);
+  }
+
+  runTrigger(
+    trigger: TriggerRecord,
+    runId: string,
+    evaluator: CompletionEvaluator,
+    host: UnattendedRunHost,
+    signal: AbortSignal,
+    kind: UnattendedOccurrenceKind = "start",
+  ): Promise<ScheduleOccurrenceResult> {
+    return this.#runUnattended(triggerDefinition(trigger), runId, evaluator, host, signal, kind);
+  }
+
+  async #runUnattended(
+    definition: UnattendedDefinition,
+    runId: string,
+    evaluator: CompletionEvaluator,
+    host: UnattendedRunHost,
+    signal: AbortSignal,
+    kind: UnattendedOccurrenceKind,
+  ): Promise<ScheduleOccurrenceResult> {
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
-    if (this.#activeRunId) throw new Error(`An unattended run is already active: ${this.#activeRunId}`);
     const binding = await resolveProjectBinding(host.cwd);
-    if (binding.projectId !== schedule.projectId || binding.projectRoot !== schedule.projectRoot) {
-      throw new Error("Schedule is bound to a different project");
+    if (binding.projectId !== definition.projectId || binding.projectRoot !== definition.projectRoot) {
+      throw new Error(`${definition.mode === "scheduled" ? "Schedule" : "Trigger"} is bound to a different project`);
     }
 
+    const workKind = definition.mode === "scheduled" ? "scheduled" : "proactive";
+    const workLabel = definition.mode === "scheduled" ? "Scheduled" : "Proactive";
     let writerLock: ControllerWriterLock | undefined;
     let worker: WorkerOperations | undefined;
     let lockAbortHandler: (() => void) | undefined;
@@ -138,20 +200,21 @@ export class UnattendedRunController {
     let ledger: BudgetLedger = EMPTY_BUDGET_LEDGER;
     try {
       writerLock = await this.#waitForWriterLock(binding, signal);
+      if (this.#activeRunId) throw new Error(`An unattended run is already active: ${this.#activeRunId}`);
       const executionSignal = AbortSignal.any([signal, writerLock.signal]);
       lockAbortHandler = () => {
         void worker?.stop().catch(() => undefined);
       };
       writerLock.signal.addEventListener("abort", lockAbortHandler, { once: true });
       const store = new RunStore(this.#dataRoot, binding.projectId, writerLock.projectLease);
-      run = await this.#prepareRun(store, binding, schedule, runId, kind);
+      run = await this.#prepareRun(store, binding, definition, runId, kind);
       const resuming = kind === "restart";
 
       let repository;
       try {
         repository = await this.#worktrees.inspectRepository(binding.projectRoot, executionSignal);
         if (writerLock.identity.kind !== "git" || repository.commonGitDirectory !== writerLock.identity.commonGitDirectory) {
-          throw new Error("Locked repository identity does not match scheduled worktree identity");
+          throw new Error(`Locked repository identity does not match ${workKind} worktree identity`);
         }
         await assertControllerWriterLock(writerLock);
         await this.#worktrees.requireCleanRepository(repository.repositoryRoot, executionSignal);
@@ -165,12 +228,12 @@ export class UnattendedRunController {
 
       const reusingWorktree = resuming && run.worker !== undefined;
       if (reusingWorktree && run.worker?.childPid && processExists(run.worker.childPid)) {
-        throw new Error(`Scheduled run still has a live worker process: ${run.worker.childPid}`);
+        throw new Error(`${workLabel} run still has a live worker process: ${run.worker.childPid}`);
       }
       const managedRoot = join(this.#dataRoot, "projects", binding.projectId, "worktrees");
       await assertControllerWriterLock(writerLock);
       if (reusingWorktree && run.worker?.repositoryRoot !== repository.repositoryRoot) {
-        throw new WorktreeNeedsUserError("Stored managed worktree repository no longer matches the scheduled project");
+        throw new WorktreeNeedsUserError(`Stored managed worktree repository no longer matches the ${workKind} project`);
       }
       const worktree = reusingWorktree
         ? await this.#worktrees.resume({
@@ -203,7 +266,7 @@ export class UnattendedRunController {
         await store.save(run);
       }
       const budgetDeadlineAt = run.budgetDeadlineAt;
-      if (!budgetDeadlineAt) throw new Error("Scheduled run has no budget deadline");
+      if (!budgetDeadlineAt) throw new Error(`${workLabel} run has no budget deadline`);
       const deadlineMs = Date.parse(budgetDeadlineAt);
       const elapsedByDeadline = Math.max(0, run.budget.maxActiveMs - Math.max(0, deadlineMs - this.#now().getTime()));
       ledger = { cycles: run.cycle, activeMs: Math.max(run.activeMs ?? 0, elapsedByDeadline) };
@@ -213,7 +276,7 @@ export class UnattendedRunController {
         host.appendRunEntry(run);
         return { status: "interrupted" };
       }
-      run = await this.#move(store, run, "starting", "Isolated scheduled worker is starting");
+      run = await this.#move(store, run, "starting", `Isolated ${workKind} worker is starting`);
 
       await assertControllerWriterLock(writerLock);
       worker = await this.#workers.launch({
@@ -241,11 +304,11 @@ export class UnattendedRunController {
           piVersion: worker.identity.piVersion,
         },
       };
-      run = await this.#move(store, run, "running", "Isolated scheduled worker started");
+      run = await this.#move(store, run, "running", `Isolated ${workKind} worker started`);
       host.appendRunEntry(run);
-      host.notify(`${run.runId}: scheduled work ${resuming ? "resumed" : "started"} on ${worktree.branch}`, "info");
+      host.notify(`${run.runId}: ${workKind} work ${resuming ? "resumed" : "started"} on ${worktree.branch}`, "info");
 
-      if (!worker) throw new Error("Scheduled RPC worker was not initialized");
+      if (!worker) throw new Error(`${workLabel} RPC worker was not initialized`);
       const runningWorker = worker;
       const contract = createCompletionContract(run.goal, run.verifierCommands, run.constraints);
       ledger = startActiveTime(ledger, this.#now().getTime());
@@ -265,9 +328,9 @@ export class UnattendedRunController {
           cycle: ledger.cycles,
           totalCycles: ((run as RunRecord).totalCycles ?? 0) + 1,
           activeMs: currentActiveMs(ledger, this.#now().getTime()),
-          latestWorkerSummary: boundedRecordText(cycleResult.lastAssistantText ?? "The scheduled worker returned no summary.", 32 * 1024),
+          latestWorkerSummary: boundedRecordText(cycleResult.lastAssistantText ?? `The ${workKind} worker returned no summary.`, 32 * 1024),
         };
-        run = await this.#move(store, run, "verifying", "Scheduled worker cycle settled");
+        run = await this.#move(store, run, "verifying", `${workLabel} worker cycle settled`);
         const evidence = collector.evidenceFor(contract);
         run = { ...run, latestEvidence: evidence };
         await store.save(run);
@@ -276,7 +339,7 @@ export class UnattendedRunController {
         if (!requiredEvidencePassed(evidence)) {
           decision = deterministicFailureDecision(evidence);
         } else {
-          run = await this.#move(store, run, "evaluating", "Scheduled deterministic evidence passed");
+          run = await this.#move(store, run, "evaluating", `${workLabel} deterministic evidence passed`);
           decision = await evaluator.evaluate({
             goal: contract.goal,
             constraints: contract.constraints,
@@ -290,7 +353,7 @@ export class UnattendedRunController {
 
         if (decision.complete && requiredEvidencePassed(evidence)) {
           if (run.state !== "evaluating") run = await this.#move(store, run, "evaluating", "Deterministic completion accepted");
-          run = await this.#move(store, run, "finalizing", "Scheduled completion accepted");
+          run = await this.#move(store, run, "finalizing", `${workLabel} completion accepted`);
           await runningWorker.stop();
           worker = undefined;
           this.#activeWorker = undefined;
@@ -345,12 +408,12 @@ export class UnattendedRunController {
           host.appendRunEntry(run);
           return { status: "interrupted" };
         }
-        if (run.state !== "running") run = await this.#move(store, run, "running", "Evaluator requested another scheduled cycle");
+        if (run.state !== "running") run = await this.#move(store, run, "running", `Evaluator requested another ${workKind} cycle`);
         feedback = decision.feedback ?? decision.reason;
       }
 
       if (run && canTransition(run.state, "interrupted")) {
-        run = await this.#terminal(store, run, "interrupted", "Scheduled worker was cancelled", ledger);
+        run = await this.#terminal(store, run, "interrupted", `${workLabel} worker was cancelled`, ledger);
         host.appendRunEntry(run);
       }
       return { status: "interrupted" };
@@ -363,8 +426,9 @@ export class UnattendedRunController {
         const store = new RunStore(this.#dataRoot, run.projectId, writerLock.projectLease);
         if (signal.aborted && canTransition(run.state, "interrupted")) {
           const paused = ledger.activeSinceMs === undefined ? ledger : pauseActiveTime(ledger, this.#now().getTime());
-          run = transitionRun({ ...run, activeMs: paused.activeMs, cycle: paused.cycles }, "interrupted", "Scheduled worker was cancelled", this.#now());
-          run = { ...run, terminalReason: "Scheduled worker was cancelled" };
+          const reason = `${workLabel} worker was cancelled`;
+          run = transitionRun({ ...run, activeMs: paused.activeMs, cycle: paused.cycles }, "interrupted", reason, this.#now());
+          run = { ...run, terminalReason: reason };
           await store.save(run);
           host.appendRunEntry(run);
           return { status: "interrupted" };
@@ -396,18 +460,19 @@ export class UnattendedRunController {
   async #prepareRun(
     store: RunStore,
     binding: ProjectBinding,
-    schedule: ScheduleRecord,
+    definition: UnattendedDefinition,
     runId: string,
-    kind: ScheduleOccurrenceKind,
+    kind: UnattendedOccurrenceKind,
   ): Promise<RunRecord> {
     const existing = await store.load(runId);
+    const label = definition.mode === "scheduled" ? "Scheduled" : "Proactive";
     if (kind === "start") {
-      if (existing) throw new Error(`Scheduled run already exists: ${runId}`);
-      return this.#createRun(store, binding, schedule, runId);
+      if (existing) throw new Error(`${label} run already exists: ${runId}`);
+      return this.#createRun(store, binding, definition, runId);
     }
-    if (!existing) throw new Error(`Scheduled run does not exist: ${runId}`);
-    if (!this.#isSafeRestart(existing, schedule)) {
-      throw new Error(`Scheduled run is not safely resumable: ${runId}`);
+    if (!existing) throw new Error(`${label} run does not exist: ${runId}`);
+    if (!this.#isSafeRestart(existing, definition)) {
+      throw new Error(`${label} run is not safely resumable: ${runId}`);
     }
 
     const resumed: { -readonly [Key in keyof RunRecord]: RunRecord[Key] } = { ...existing };
@@ -432,13 +497,13 @@ export class UnattendedRunController {
       delete resumed.progressSignature;
       delete resumed.budgetDeadlineAt;
     }
-    return this.#move(store, resumed, "preflight", "Scheduled run restart preflight started");
+    return this.#move(store, resumed, "preflight", `${label} run restart preflight started`);
   }
 
   async #createRun(
     store: RunStore,
     binding: ProjectBinding,
-    schedule: ScheduleRecord,
+    definition: UnattendedDefinition,
     runId: string,
   ): Promise<RunRecord> {
     const createdAt = this.#now().toISOString();
@@ -446,13 +511,13 @@ export class UnattendedRunController {
       schemaVersion: 1,
       runId,
       projectId: binding.projectId,
-      scheduleId: schedule.scheduleId,
-      mode: "scheduled",
+      ...(definition.mode === "scheduled" ? { scheduleId: definition.sourceId } : { triggerId: definition.sourceId }),
+      mode: definition.mode,
       state: "configuring",
-      goal: schedule.goal,
-      constraints: schedule.constraints,
-      verifierCommands: schedule.verifierCommands,
-      budget: schedule.budget,
+      goal: definition.goal,
+      constraints: definition.constraints,
+      verifierCommands: definition.verifierCommands,
+      budget: definition.budget,
       budgetEpoch: 1,
       budgetHistory: [],
       cycle: 0,
@@ -465,19 +530,23 @@ export class UnattendedRunController {
       transitions: [],
     };
     await store.save(created);
-    return this.#move(store, created, "preflight", "Scheduled writer preflight started");
+    const label = definition.mode === "scheduled" ? "Scheduled" : "Proactive";
+    return this.#move(store, created, "preflight", `${label} writer preflight started`);
   }
 
-  #isSafeRestart(run: RunRecord, schedule: ScheduleRecord): boolean {
+  #isSafeRestart(run: RunRecord, definition: UnattendedDefinition): boolean {
     const awaitingPreflightRetry = run.state === "awaiting_user" && run.worker === undefined;
     const resumableWorker = run.worker?.worktreeRetained === true && run.worker.reviewCommit === undefined &&
       Boolean(run.worker.sessionFile && run.worker.sessionId && run.budgetDeadlineAt);
-    return run.mode === "scheduled" &&
-      run.scheduleId === schedule.scheduleId &&
-      run.goal === schedule.goal &&
-      sameStringList(run.constraints, schedule.constraints) &&
-      sameStringList(run.verifierCommands, schedule.verifierCommands) &&
-      sameBudget(run.budget, schedule.budget) &&
+    const sourceMatches = definition.mode === "scheduled"
+      ? run.scheduleId === definition.sourceId && run.triggerId === undefined
+      : run.triggerId === definition.sourceId && run.scheduleId === undefined;
+    return run.mode === definition.mode &&
+      sourceMatches &&
+      run.goal === definition.goal &&
+      sameStringList(run.constraints, definition.constraints) &&
+      sameStringList(run.verifierCommands, definition.verifierCommands) &&
+      sameBudget(run.budget, definition.budget) &&
       isResumableRun(run) &&
       (awaitingPreflightRetry || resumableWorker);
   }

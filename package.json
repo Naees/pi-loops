@@ -50,6 +50,7 @@
     "test:packed": "node scripts/test-packed-install.mjs",
     "test:e2e:attended": "node scripts/e2e-attended-goal.mjs",
     "test:e2e:scheduled:packed": "node scripts/e2e-packed-scheduled-writer.mjs",
+    "test:e2e:proactive:runtime": "vitest run --config scripts/vitest.proactive.config.ts --reporter=dot",
     "spike:rpc": "node scripts/spike-rpc-worker.ts",
     "spike:rpc:lifecycle": "node scripts/spike-rpc-lifecycle.ts",
     "test:rpc:lifecycle:production": "node scripts/spike-rpc-lifecycle.ts",

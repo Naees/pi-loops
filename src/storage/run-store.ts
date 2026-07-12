@@ -1,7 +1,7 @@
 import { rm, stat, utimes } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { canTransition, transitionRun } from "../controller/state-machine.js";
-import { isProjectId, isRunId, isScheduleId } from "../shared/ids.js";
+import { isProjectId, isRunId, isScheduleId, isTriggerId } from "../shared/ids.js";
 import { RUN_MODES, RUN_STATES, type RunRecord, type RunState } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget, isStringArray } from "../shared/validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
@@ -134,6 +134,7 @@ function parseRunRecord(value: unknown): RunRecord {
       "runId",
       "projectId",
       "scheduleId",
+      "triggerId",
       "mode",
       "state",
       "goal",
@@ -164,6 +165,7 @@ function parseRunRecord(value: unknown): RunRecord {
     typeof value.projectId !== "string" ||
     !isProjectId(value.projectId) ||
     (value.scheduleId !== undefined && (typeof value.scheduleId !== "string" || !isScheduleId(value.scheduleId))) ||
+    (value.triggerId !== undefined && (typeof value.triggerId !== "string" || !isTriggerId(value.triggerId))) ||
     typeof value.mode !== "string" ||
     !RUN_MODES.includes(value.mode as (typeof RUN_MODES)[number]) ||
     typeof value.state !== "string" ||
@@ -205,7 +207,9 @@ function parseRunRecord(value: unknown): RunRecord {
     (value.state === "failed" && (typeof value.failureRecoverable !== "boolean" || typeof value.terminalReason !== "string")) ||
     (value.state !== "failed" && value.failureRecoverable !== undefined) ||
     (value.worker !== undefined && !isStoredWorker(value.worker, value.runId)) ||
-    (value.mode === "goal" && value.worker !== undefined) ||
+    (value.mode === "goal" && (value.worker !== undefined || value.scheduleId !== undefined || value.triggerId !== undefined)) ||
+    (value.mode === "scheduled" && (value.scheduleId === undefined || value.triggerId !== undefined)) ||
+    (value.mode === "proactive" && (value.triggerId === undefined || value.scheduleId !== undefined)) ||
     (value.mode !== "goal" && value.state === "completed" &&
       (!isRecord(value.worker) || value.worker.reviewCommit === undefined || value.worker.worktreeRetained !== false))
   ) {

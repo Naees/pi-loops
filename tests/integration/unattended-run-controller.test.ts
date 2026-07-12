@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UnattendedRunController, type UnattendedRunHost } from "../../src/controller/unattended-run-controller.js";
 import type { CompletionEvaluator } from "../../src/evidence/evaluator.js";
 import { createProjectId } from "../../src/shared/ids.js";
-import type { RunRecord, ScheduleRecord } from "../../src/shared/types.js";
+import type { RunRecord, ScheduleRecord, TriggerRecord } from "../../src/shared/types.js";
 import { acquireControllerWriterLock, releaseControllerWriterLock, repositoryWriterLeasePath, resolveRepositoryLockIdentity } from "../../src/storage/controller-writer-lock.js";
 import { acquireWriterLease, releaseWriterLease } from "../../src/storage/lease.js";
 import { RunStore, writerLeasePath } from "../../src/storage/run-store.js";
@@ -382,6 +382,81 @@ describe("unattended run controller", () => {
       .rejects.toThrow(`live worker process: ${process.pid}`);
     expect(git.resume).not.toHaveBeenCalled();
   });
+
+  it("persists proactive identity while reusing unattended isolation and finalization", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const trigger: TriggerRecord = {
+      schemaVersion: 1,
+      triggerId: "trigger_1234abcd",
+      projectId,
+      projectRoot,
+      state: "running",
+      goal: schedule.goal,
+      constraints: schedule.constraints,
+      verifierCommands: schedule.verifierCommands,
+      budget: schedule.budget,
+      source: { kind: "event" },
+      activeRunId: "run_1234abcd",
+      createdAt: schedule.createdAt,
+      updatedAt: schedule.updatedAt,
+    };
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+
+    await expect(controller.runTrigger(trigger, "run_1234abcd", evaluator, host, new AbortController().signal))
+      .resolves.toEqual({ status: "finished" });
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      mode: "proactive",
+      triggerId: trigger.triggerId,
+      state: "completed",
+      worker: expect.objectContaining({ branch: "pi-loops/run_1234abcd", worktreeRetained: false }),
+    }));
+    expect(host.notify).toHaveBeenCalledWith(expect.stringContaining("proactive work started"), "info");
+  });
+
+  it("serializes concurrent proactive writers through the repository guard", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const makeTrigger = (triggerId: string, runId: string): TriggerRecord => ({
+      schemaVersion: 1,
+      triggerId,
+      projectId,
+      projectRoot,
+      state: "running",
+      goal: schedule.goal,
+      constraints: [],
+      verifierCommands: [],
+      budget: schedule.budget,
+      source: { kind: "event" },
+      activeRunId: runId,
+      createdAt: schedule.createdAt,
+      updatedAt: schedule.updatedAt,
+    });
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    let finishFirst: ((result: { lastAssistantText: string; events: never[] }) => void) | undefined;
+    rpc.worker.runCycle.mockImplementation(() => rpc.worker.runCycle.mock.calls.length === 1
+      ? new Promise((resolve) => { finishFirst = resolve; })
+      : Promise.resolve({ lastAssistantText: "implemented", events: [] }));
+    const controller = new UnattendedRunController({
+      dataRoot,
+      repositoryLockRoot: join(dataRoot, "repository-locks"),
+      worktrees: git,
+      workers: rpc.manager,
+      writerLeaseStaleMs: 2_000,
+    });
+
+    const first = controller.runTrigger(makeTrigger("trigger_1234abcd", "run_1234abcd"), "run_1234abcd", evaluator, host, new AbortController().signal);
+    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"));
+    const second = controller.runTrigger(makeTrigger("trigger_deadbeef", "run_deadbeef"), "run_deadbeef", evaluator, host, new AbortController().signal);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(rpc.manager.launch).toHaveBeenCalledOnce();
+    finishFirst?.({ lastAssistantText: "implemented", events: [] });
+
+    await expect(first).resolves.toEqual({ status: "finished" });
+    await expect(second).resolves.toEqual({ status: "finished" });
+    expect(rpc.manager.launch).toHaveBeenCalledTimes(2);
+  }, 5_000);
 
   it("fails closed on an unhandled worker interaction", async () => {
     const { dataRoot, projectRoot, entries, host, schedule } = await harness();

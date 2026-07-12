@@ -1,11 +1,13 @@
 ---
 name: pi-loops
-description: Use bounded Pi Loops attended goals and confirmed local schedules when a user asks to iterate until a condition is met, schedule work while Pi remains open, inspect status, stop work, or resume an interrupted run.
+description: Use bounded Pi Loops goals, schedules, and confirmed proactive triggers when a user asks to iterate until a condition is met, run work while Pi remains open, inspect status, stop work, or resume an interrupted run.
 ---
 
 # Pi Loops
 
-Use the `pi_loops` tool for persistent goal and schedule state. Use `/loops` when giving the user an explicit command example. Schedule creation requires interactive confirmation; proactive triggers are not implemented yet.
+Use the `pi_loops` tool for persistent goal, schedule, and trigger state. Use `/loops` when giving the user an explicit command example. Schedule and trigger creation require interactive confirmation.
+
+Create filesystem triggers with `/loops watch <project-path> -- <goal>` and namespaced event triggers with `/loops watch event -- <goal>`. The model-facing `trigger` action may fire only an existing confirmed trigger ID; never use event payloads or tool parameters to replace its persisted goal, checks, constraints, budget, or project binding.
 
 ## Goal quality
 
@@ -26,6 +28,6 @@ If another installed tool delegates work, await that work before claiming comple
 
 ## Runtime boundary
 
-Pi Loops runs only while Pi is running. Do not imply that local schedules continue after Pi exits.
+Pi Loops runs only while Pi is running. Do not imply that local schedules, filesystem watchers, or event triggers continue after Pi exits.
 
 `pi-subagents` is optional. It may be useful for parallel workers or independent reviews when installed, but ordinary Pi Loops goals must not require it.

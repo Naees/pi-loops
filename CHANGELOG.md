@@ -21,11 +21,14 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Fail-closed current-Pi launch resolution for Node CLI and standalone executable layouts without PATH search.
 - Phase 2 scheduling with natural time parsing, normalized confirmation, project-bound persistence, missed-run discard, overlap coalescing, restart support, and shutdown-aware timers.
 - Internal bounded RPC worker transport, fail-closed UI relay, isolated Git worktrees, review-branch finalization, and scheduled-run orchestration.
+- Phase 3 proactive triggers with confirmed project-contained filesystem watches, strict namespaced event-bus payloads, model-facing firing of confirmed definitions, debounce, coalescing, restart recovery, and trigger claims.
 
 ### Changed
 
 - Consolidated attended-run initialization, UTF-8 record truncation, and npm package-boundary checks.
 - Separated extension command parsing and presentation, centralized record-file I/O and error normalization, and isolated scheduled restart preparation from execution.
+- Generalized unattended execution so scheduled and proactive writers share worktree isolation, RPC lifecycle, finite budgets, repository guards, and review-branch finalization.
+- Bounded event ingress, error notifications, filesystem watcher admission, JSON record reads, and per-project trigger definitions; coordinated shutdown now attempts every safety cleanup before reporting failures.
 
 ### Fixed
 

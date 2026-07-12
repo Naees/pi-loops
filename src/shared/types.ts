@@ -24,11 +24,18 @@ export type RunMode = (typeof RUN_MODES)[number];
 export const SCHEDULE_STATES = ["enabled", "running", "pending_coalesced", "paused"] as const;
 export type ScheduleState = (typeof SCHEDULE_STATES)[number];
 
+export const TRIGGER_STATES = ["enabled", "running", "pending_coalesced", "paused"] as const;
+export type TriggerState = (typeof TRIGGER_STATES)[number];
+
 export type SchedulePauseReason = "completed" | "missed" | "interrupted" | "user";
 
 export type ScheduleTiming =
   | { readonly kind: "once"; readonly fireAt: string }
   | { readonly kind: "recurring"; readonly intervalMs: number; readonly anchorAt: string };
+
+export type TriggerSource =
+  | { readonly kind: "filesystem"; readonly relativePath: string; readonly debounceMs: number }
+  | { readonly kind: "event" };
 
 export interface RunBudget {
   readonly maxActiveMs: number;
@@ -93,6 +100,25 @@ export interface ScheduleRecord {
   readonly updatedAt: string;
 }
 
+export interface TriggerRecord {
+  readonly schemaVersion: 1;
+  readonly triggerId: string;
+  readonly projectId: string;
+  readonly projectRoot: string;
+  readonly state: TriggerState;
+  readonly goal: string;
+  readonly constraints: readonly string[];
+  readonly verifierCommands: readonly string[];
+  readonly budget: RunBudget;
+  readonly source: TriggerSource;
+  readonly activeRunId?: string;
+  readonly pendingSince?: string;
+  readonly lastTriggeredAt?: string;
+  readonly lastCompletedAt?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface UnattendedWorkerRecord {
   readonly repositoryRoot: string;
   readonly baseCommit: string;
@@ -113,6 +139,7 @@ export interface RunRecord {
   readonly runId: string;
   readonly projectId: string;
   readonly scheduleId?: string;
+  readonly triggerId?: string;
   readonly mode: RunMode;
   readonly state: RunState;
   readonly goal: string;

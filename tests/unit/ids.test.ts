@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { createProjectId, createRunId, createScheduleId, isRunId, isScheduleId } from "../../src/shared/ids.js";
+import { createProjectId, createRunId, createScheduleId, createTriggerId, isRunId, isScheduleId, isTriggerId } from "../../src/shared/ids.js";
 
 describe("public identifiers", () => {
-  it("creates prefixed run and schedule IDs", () => {
+  it("creates prefixed run, schedule, and trigger IDs", () => {
     const runId = createRunId();
     const scheduleId = createScheduleId();
+    const triggerId = createTriggerId();
 
     expect(isRunId(runId)).toBe(true);
     expect(isScheduleId(scheduleId)).toBe(true);
+    expect(isTriggerId(triggerId)).toBe(true);
     expect(isRunId(scheduleId)).toBe(false);
+    expect(isScheduleId(triggerId)).toBe(false);
   });
 
   it("creates a stable project ID from the canonical root", () => {

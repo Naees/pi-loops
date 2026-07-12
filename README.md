@@ -1,6 +1,6 @@
 # Pi Loops
 
-> **Status: attended goals and macOS/Pi 0.80.6 scheduling are implemented in source; no public npm release exists yet.**
+> **Status: attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6; no public npm release exists yet.**
 
 Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
@@ -41,7 +41,7 @@ Do not modify the tests.
 Do not modify existing auth tests.
 ```
 
-Goal loops run in the attended Pi session and current checkout. Scheduled writers run only while Pi is open, in isolated Git worktrees, and leave successful work on review branches without auto-merging.
+Goal loops run in the attended Pi session and current checkout. Scheduled and proactive writers run only while Pi is open, in isolated Git worktrees, and leave successful work on review branches without auto-merging.
 
 ## Loop modes
 
@@ -49,7 +49,7 @@ Pi Loops is delivered in phases:
 
 1. **Turn-based verification and attended goal loops — implemented:** bounded cycles, deterministic evidence, fresh evaluation, status, stop, interruption, and resume.
 2. **Scheduled loops:** trigger bounded goals at a time or interval while Pi is running (validated on macOS with Pi 0.80.6).
-3. **Proactive loops — planned:** trigger goals from filesystem or other Pi-extension events.
+3. **Proactive loops:** trigger confirmed bounded goals from project filesystem changes, other Pi extensions, or the model-facing tool while Pi is running.
 
 ## Completion model
 
@@ -73,16 +73,18 @@ Runs end explicitly as completed, failed, cancelled, interrupted, stalled, or bu
 
 ```text
 /loops goal <goal>
+/loops schedule <time-expression> -- <goal>
+/loops watch <project-path|event> -- <goal>
 /loops status
-/loops stop [run-id]
-/loops resume [run-id] [guidance]
+/loops stop [run-id|schedule-id|trigger-id]
+/loops resume [run-id|trigger-id] [guidance]
 /loops clean
-/loops delete <run-id>
+/loops delete <run-id|schedule-id|trigger-id>
 ```
 
-The model-facing `pi_loops` tool exposes equivalent `goal`, `status`, `stop`, and `resume` actions, including optional explicit verifier commands, constraints, and finite budget overrides.
+The model-facing `pi_loops` tool exposes `goal`, `schedule`, `trigger`, `status`, `stop`, and `resume` actions, including optional explicit verifier commands, constraints, and finite budget overrides. `trigger` fires an existing user-confirmed trigger definition by ID; it cannot inject a new goal.
 
-`/loops schedule <time-expression> -- <goal>` creates a confirmed project-bound schedule. `/loops clean` enforces bounded terminal-record retention; `/loops delete` requires confirmation and removes one stored run or schedule record.
+`/loops schedule <time-expression> -- <goal>` creates a confirmed project-bound schedule. `/loops watch <path> -- <goal>` creates a debounced filesystem trigger, while `/loops watch event -- <goal>` creates an event-bus trigger. `/loops clean` enforces bounded terminal-record retention; `/loops delete` requires confirmation and removes one stored run, schedule, or trigger record.
 
 Each goal execution receives a run ID such as `run_a4f2`.
 
@@ -92,7 +94,7 @@ If only one run is resumable, `/loops resume` will not require its ID. If severa
 
 Attended goals may work in the current checkout.
 
-Scheduled writers use an isolated Git worktree and a namespaced branch such as the following. Proactive writers will use the same boundary when Phase 3 is implemented:
+Scheduled and proactive writers use an isolated Git worktree and a namespaced branch such as:
 
 ```text
 pi-loops/run-a4f2
@@ -107,6 +109,22 @@ Unattended writing pauses when:
 - A safe isolated worktree cannot be created.
 
 Attended goals and read-only schedules can still operate in those cases.
+
+## Proactive trigger contract
+
+Filesystem triggers accept only existing canonical paths contained by the creating project. Changes are debounced, unattributed recursive events and Git metadata are ignored, and trigger storms coalesce to at most one pending occurrence. A project may store at most 50 trigger definitions. `/loops stop <trigger-id>` pauses a definition after cancelling its local active occurrence; `/loops resume <trigger-id>` re-enables it.
+
+Other Pi extensions can fire a previously confirmed event trigger through Pi's shared event bus:
+
+```ts
+pi.events.emit("pi-loops:trigger", {
+  schemaVersion: 1,
+  triggerId: "trigger_a4f2c1d3",
+  eventId: "optional-source-event-id",
+});
+```
+
+The payload is strict and cannot supply a goal, verifier command, budget, path, credential, or vendor-specific data. Event ingress is bounded to one active and one pending delivery per definition; repeated optional `eventId` values are deduplicated for the current Pi process. Event adapters remain outside Pi Loops core.
 
 ## Process boundary
 
@@ -197,12 +215,12 @@ No project configuration file will be created automatically.
 - Worktree-isolated child execution.
 - Review branches and restart recovery.
 
-### Phase 3 — Proactive triggers
+### Phase 3 — Proactive triggers (implemented for macOS/Pi 0.80.6)
 
-- Filesystem triggers.
+- Confirmed, project-contained filesystem triggers.
 - Namespaced Pi event-bus integration.
-- Model-facing triggers.
-- Debounce and trigger-storm protection.
+- Model-facing firing of confirmed trigger definitions.
+- Debounce, coalescing, restart, and trigger-storm protection.
 
 ### Phase 4 — Production hardening
 
@@ -218,7 +236,7 @@ No project configuration file will be created automatically.
 - Enable and document each operating system only after its complete qualification matrix passes.
 - Perform the final clean-install and publication gate after cross-platform qualification.
 
-Physical devices are not required; native CI runners or VMs provide the required operating-system evidence. Until Phase 5 passes, unattended scheduling remains enabled only on the already validated macOS/Pi 0.80.6 combination.
+Physical devices are not required; native CI runners or VMs provide the required operating-system evidence. Until Phase 5 passes, unattended scheduling and proactive writing remain enabled only on the already validated macOS/Pi 0.80.6 combination.
 
 Code will be reviewed and refactored between every phase rather than postponing cleanup until the end.
 
@@ -226,7 +244,7 @@ Code will be reviewed and refactored between every phase rather than postponing 
 
 Pi packages execute with the user's system permissions. Review package source before installation.
 
-The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Scheduled child launch is enabled only on the validated macOS/Pi 0.80.6 combination; other platforms remain fail-closed pending equivalent lifecycle evidence.
+The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Scheduled and proactive child launch is enabled only on the validated macOS/Pi 0.80.6 combination; other platforms remain fail-closed pending equivalent lifecycle evidence.
 
 Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. A comprehensive vulnerability and supply-chain assessment remains required before release.
 
@@ -234,7 +252,7 @@ Report security issues through the private process documented in [`SECURITY.md`]
 
 ## Project status
 
-The product contract and architecture are approved. Attended goals and macOS scheduling are implemented. Proactive triggers, final production hardening, and Linux/Windows qualification remain incomplete; no public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6. Final production hardening and Linux/Windows qualification remain incomplete; no public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 

@@ -29,6 +29,7 @@ function mockApi(): {
   getCommands: ReturnType<typeof vi.fn>;
   sendUserMessage: ReturnType<typeof vi.fn>;
   appendEntry: ReturnType<typeof vi.fn>;
+  eventOn: ReturnType<typeof vi.fn>;
 } {
   const registerCommand = vi.fn();
   const registerTool = vi.fn();
@@ -37,8 +38,9 @@ function mockApi(): {
   const getCommands = vi.fn(() => []);
   const sendUserMessage = vi.fn();
   const appendEntry = vi.fn();
+  const eventOn = vi.fn(() => vi.fn());
   return {
-    api: { registerCommand, registerTool, on, getAllTools, getCommands, sendUserMessage, appendEntry } as unknown as ExtensionAPI,
+    api: { registerCommand, registerTool, on, getAllTools, getCommands, sendUserMessage, appendEntry, events: { on: eventOn, emit: vi.fn() } } as unknown as ExtensionAPI,
     registerCommand,
     registerTool,
     on,
@@ -46,6 +48,7 @@ function mockApi(): {
     getCommands,
     sendUserMessage,
     appendEntry,
+    eventOn,
   };
 }
 
@@ -179,6 +182,62 @@ describe("Pi extension registration", () => {
     expect(notifications.at(-1)?.message).toContain("run checks");
   });
 
+  it("creates confirmed triggers and accepts only the namespaced event contract", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx, notifications } = await context();
+    ctx.ui.confirm = vi.fn(async () => true);
+    const mocked = mockApi();
+    piLoopsExtension(mocked.api);
+    const command = mocked.registerCommand.mock.calls[0]?.[1] as { handler(args: string, context: ExtensionContext): Promise<void> };
+    const tool = mocked.registerTool.mock.calls[0]?.[0] as {
+      execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal, onUpdate: undefined, context: ExtensionContext): Promise<{ content: { text: string }[]; details: Record<string, unknown> }>;
+    };
+    const start = mocked.on.mock.calls.find(([event]) => event === "session_start")?.[1] as
+      ((_event: unknown, context: ExtensionContext) => Promise<void>) | undefined;
+    const shutdown = mocked.on.mock.calls.find(([event]) => event === "session_shutdown")?.[1] as
+      ((_event: unknown, context: ExtensionContext) => Promise<void>) | undefined;
+    const eventHandler = mocked.eventOn.mock.calls.find(([event]) => event === "pi-loops:trigger")?.[1] as
+      ((payload: unknown) => void) | undefined;
+
+    await start?.({}, ctx);
+    await command.handler("watch event -- handle build output", ctx);
+    const triggerId = notifications.at(-1)?.message.match(/^trigger_[0-9a-f]{8}/)?.[0];
+    expect(triggerId).toBeDefined();
+    expect(ctx.ui.confirm).toHaveBeenCalledWith("Create Pi Loops trigger?", expect.stringContaining("event bus: pi-loops:trigger"));
+    await command.handler("status", ctx);
+    expect(notifications.at(-1)?.message).toContain("Triggers:");
+    expect(notifications.at(-1)?.message).toContain("handle build output");
+
+    await expect(tool.execute("stop-trigger", { action: "stop", runId: triggerId }, new AbortController().signal, undefined, ctx))
+      .resolves.toEqual(expect.objectContaining({ details: { workflowId: triggerId } }));
+    await expect(tool.execute("paused-trigger", { action: "trigger", triggerId }, new AbortController().signal, undefined, ctx))
+      .resolves.toEqual(expect.objectContaining({ details: { triggerId, result: "ignored" } }));
+    await expect(tool.execute("resume-trigger", { action: "resume", runId: triggerId }, new AbortController().signal, undefined, ctx))
+      .resolves.toEqual(expect.objectContaining({ details: { triggerId } }));
+    await expect(tool.execute("trigger-call", { action: "trigger", triggerId }, new AbortController().signal, undefined, ctx))
+      .resolves.toEqual(expect.objectContaining({ details: { triggerId, result: "started" } }));
+    await vi.waitFor(() => expect(mocked.appendEntry).toHaveBeenCalledWith(
+      "pi-loops.run",
+      expect.objectContaining({ state: "awaiting_user" }),
+    ));
+    const proactiveRun = mocked.appendEntry.mock.calls.find(([type, record]) =>
+      type === "pi-loops.run" && (record as { state?: string }).state === "awaiting_user",
+    )?.[1] as { runId: string } | undefined;
+    expect(proactiveRun).toBeDefined();
+    await vi.waitFor(async () => {
+      await command.handler("status", ctx);
+      expect(notifications.at(-1)?.message).toContain(`${triggerId}  enabled`);
+    });
+    await expect(tool.execute("resume-proactive", { action: "resume", runId: proactiveRun?.runId }, new AbortController().signal, undefined, ctx))
+      .resolves.toEqual(expect.objectContaining({ content: [{ type: "text", text: expect.stringContaining("proactive restart requested") }] }));
+    for (let index = 0; index < 20; index += 1) {
+      eventHandler?.({ schemaVersion: 1, triggerId, goal: `hostile injection ${index}` });
+    }
+    const rejectedNotices = notifications.filter(({ message }) => message.includes("rejected trigger event") && message.includes("invalid payload"));
+    expect(rejectedNotices).toHaveLength(1);
+    await shutdown?.({}, ctx);
+  });
+
   it("supports help, unsupported-command diagnostics, and confirmed schedule deletion", async () => {
     delete process.env.PI_LOOPS_CHILD;
     const { ctx, notifications } = await context();
@@ -189,8 +248,8 @@ describe("Pi extension registration", () => {
 
     await command.handler("help", ctx);
     expect(notifications.at(-1)?.message).toContain("/loops schedule <time-expression> -- <goal>");
-    await command.handler("watch files", ctx);
-    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "warning", message: expect.stringContaining("planned for a later phase: watch") }));
+    await command.handler("future files", ctx);
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "warning", message: expect.stringContaining("planned for a later phase: future") }));
     await command.handler("goal", ctx);
     expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "error", message: "Usage: /loops goal <goal>" }));
 

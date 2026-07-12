@@ -1,8 +1,9 @@
 import type { GoalResumeRequest } from "../controller/attended-goal-controller.js";
 import type { ScheduleCreateRequest } from "../scheduler/scheduler.js";
+import type { TriggerCreateRequest } from "../triggers/controller.js";
 import type { RunBudget } from "../shared/types.js";
 
-export const LOOP_COMMAND_ACTIONS = ["goal", "schedule", "status", "stop", "resume", "clean", "delete", "help"] as const;
+export const LOOP_COMMAND_ACTIONS = ["goal", "schedule", "watch", "status", "stop", "resume", "clean", "delete", "help"] as const;
 
 export type LoopCommandAction = (typeof LOOP_COMMAND_ACTIONS)[number] | "unsupported";
 
@@ -24,6 +25,7 @@ export function parseCommand(args: string): ParsedLoopCommand {
   if (isLoopCommandAction(action)) {
     if (action === "goal" && !value) throw new Error("Usage: /loops goal <goal>");
     if (action === "schedule" && !value) throw new Error("Usage: /loops schedule <time-expression> -- <goal>");
+    if (action === "watch" && !value) throw new Error("Usage: /loops watch <project-path|event> -- <goal>");
     return { action, value };
   }
   return { action: "unsupported", value: action };
@@ -38,10 +40,19 @@ export function parseScheduleValue(value: string): ScheduleCreateRequest {
   return { expression, goal };
 }
 
+export function parseWatchValue(value: string): TriggerCreateRequest {
+  const separator = value.indexOf(" -- ");
+  if (separator <= 0) throw new Error("Usage: /loops watch <project-path|event> -- <goal>");
+  const source = value.slice(0, separator).trim();
+  const goal = value.slice(separator + 4).trim();
+  if (!source || !goal) throw new Error("Usage: /loops watch <project-path|event> -- <goal>");
+  return { source: source.toLowerCase() === "event" ? { kind: "event" } : { kind: "filesystem", path: source }, goal };
+}
+
 export function parseResumeValue(value: string): GoalResumeRequest {
   if (!value) return {};
   const [first, ...rest] = value.split(/\s+/);
-  if (first?.startsWith("run_")) {
+  if (first?.startsWith("run_") || first?.startsWith("trigger_")) {
     return { runId: first, ...(rest.length === 0 ? {} : { guidance: rest.join(" ") }) };
   }
   return { guidance: value };

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 const RUN_ID_PATTERN = /^run_[0-9a-f]{8}$/;
 const SCHEDULE_ID_PATTERN = /^schedule_[0-9a-f]{8}$/;
+const TRIGGER_ID_PATTERN = /^trigger_[0-9a-f]{8}$/;
 const PROJECT_ID_PATTERN = /^project_[0-9a-f]{16}$/;
 
 function randomHex(bytes: number): string {
@@ -16,12 +17,20 @@ export function createScheduleId(): string {
   return `schedule_${randomHex(4)}`;
 }
 
+export function createTriggerId(): string {
+  return `trigger_${randomHex(4)}`;
+}
+
 export function isRunId(value: string): boolean {
   return RUN_ID_PATTERN.test(value);
 }
 
 export function isScheduleId(value: string): boolean {
   return SCHEDULE_ID_PATTERN.test(value);
+}
+
+export function isTriggerId(value: string): boolean {
+  return TRIGGER_ID_PATTERN.test(value);
 }
 
 export function isProjectId(value: string): boolean {

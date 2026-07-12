@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { RunRecord, ScheduleRecord } from "../shared/types.js";
+import type { RunRecord, ScheduleRecord, TriggerRecord } from "../shared/types.js";
 
 export function conciseRunEntry(run: RunRecord): Record<string, unknown> {
   return {
@@ -40,14 +40,21 @@ export function formatScheduleStatus(schedule: ScheduleRecord): string {
   return `${schedule.scheduleId}  ${schedule.state}${pause}  ${schedule.normalizedExpression}${next}${active} — ${schedule.goal}`;
 }
 
+export function formatTriggerStatus(trigger: TriggerRecord): string {
+  const source = trigger.source.kind === "event" ? "event" : `watch ${trigger.source.relativePath}`;
+  const active = trigger.activeRunId ? ` active ${trigger.activeRunId}` : "";
+  return `${trigger.triggerId}  ${trigger.state}  ${source}${active} — ${trigger.goal}`;
+}
+
 export function commandHelp(): string {
   return [
     "/loops goal <goal>",
     "/loops schedule <time-expression> -- <goal>",
+    "/loops watch <project-path|event> -- <goal>",
     "/loops status",
-    "/loops stop [run-id]",
-    "/loops resume [run-id] [guidance]",
+    "/loops stop [run-id|schedule-id|trigger-id]",
+    "/loops resume [run-id|trigger-id] [guidance]",
     "/loops clean",
-    "/loops delete <run-id|schedule-id>",
+    "/loops delete <run-id|schedule-id|trigger-id>",
   ].join("\n");
 }

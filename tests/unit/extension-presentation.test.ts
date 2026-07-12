@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { commandHelp, conciseRunEntry, formatScheduleStatus, lastAssistantText, toolResult } from "../../src/extension/presentation.js";
-import type { RunRecord, ScheduleRecord } from "../../src/shared/types.js";
+import { commandHelp, conciseRunEntry, formatScheduleStatus, formatTriggerStatus, lastAssistantText, toolResult } from "../../src/extension/presentation.js";
+import type { RunRecord, ScheduleRecord, TriggerRecord } from "../../src/shared/types.js";
 
 const run: RunRecord = {
   schemaVersion: 1,
@@ -54,10 +54,26 @@ describe("extension presentation", () => {
     }));
   });
 
-  it("formats schedule state and command help", () => {
+  it("formats schedule and trigger state with command help", () => {
     expect(formatScheduleStatus(schedule)).toContain("schedule_1234abcd  running");
     expect(formatScheduleStatus(schedule)).toContain("next 2026-07-12T00:05:00.000Z active run_1234abcd — check CI");
+    const trigger: TriggerRecord = {
+      schemaVersion: 1,
+      triggerId: "trigger_1234abcd",
+      projectId: schedule.projectId,
+      projectRoot: schedule.projectRoot,
+      state: "enabled",
+      goal: "regenerate",
+      constraints: [],
+      verifierCommands: [],
+      budget: schedule.budget,
+      source: { kind: "filesystem", relativePath: "src", debounceMs: 1_000 },
+      createdAt: schedule.createdAt,
+      updatedAt: schedule.updatedAt,
+    };
+    expect(formatTriggerStatus(trigger)).toBe("trigger_1234abcd  enabled  watch src — regenerate");
     expect(commandHelp()).toContain("/loops schedule <time-expression> -- <goal>");
+    expect(commandHelp()).toContain("/loops watch <project-path|event> -- <goal>");
   });
 
   it("uses the most recent non-empty assistant text", () => {

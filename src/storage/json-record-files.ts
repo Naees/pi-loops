@@ -1,17 +1,29 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
 
 export async function readBoundedJsonFile(
   path: string,
   maxBytes: number,
   oversizedMessage: string,
 ): Promise<unknown | undefined> {
+  let handle;
   try {
-    const metadata = await stat(path);
+    handle = await open(path, "r");
+    const metadata = await handle.stat();
     if (metadata.size > maxBytes) throw new Error(oversizedMessage);
-    return JSON.parse(await readFile(path, "utf8")) as unknown;
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    if (bytesRead > maxBytes) throw new Error(oversizedMessage);
+    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")) as unknown;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
+  } finally {
+    await handle?.close();
   }
 }
 
