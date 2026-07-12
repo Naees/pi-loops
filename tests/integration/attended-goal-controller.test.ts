@@ -21,7 +21,7 @@ async function harness() {
   const project = await mkdtemp(join(tmpdir(), "pi-loops-project-"));
   temporaryDirectories.push(root, project);
   let time = Date.parse("2026-07-12T00:00:00.000Z");
-  const controller = new AttendedGoalController({ dataRoot: root, now: () => new Date(++time), evaluatorRetryDelaysMs: [0, 0] });
+  const controller = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks"), now: () => new Date(++time), evaluatorRetryDelaysMs: [0, 0] });
   const messages: { message: string; delivery: string }[] = [];
   const entries: RunRecord[] = [];
   const notifications: string[] = [];
@@ -91,7 +91,7 @@ describe("attended goal controller", () => {
     if (initialized.status !== 0) throw new Error(initialized.stderr);
     const nested = join(project, "nested");
     await mkdir(nested);
-    const contender = new AttendedGoalController({ dataRoot: root });
+    const contender = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks") });
     const nestedHost: GoalLoopHost = { ...host, cwd: nested };
     const started = await controller.start({ goal: "first writer" }, host);
 
@@ -106,11 +106,11 @@ describe("attended goal controller", () => {
     const { root, host, project, notifications } = await harness();
     const initialized = spawnSync("git", ["init", "-q"], { cwd: project, encoding: "utf8", shell: false });
     if (initialized.status !== 0) throw new Error(initialized.stderr);
-    const controller = new AttendedGoalController({ dataRoot: root, writerLeaseStaleMs: 2_000 });
+    const controller = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks"), writerLeaseStaleMs: 2_000 });
     await controller.start({ goal: "guarded writer" }, host);
     const identity = await resolveRepositoryLockIdentity(project);
     if (identity.kind !== "git") throw new Error("Expected Git identity");
-    const leasePath = repositoryWriterLeasePath(root, identity.commonGitDirectory);
+    const leasePath = repositoryWriterLeasePath(join(root, "repository-locks"), identity.commonGitDirectory);
 
     await rm(`${leasePath}.lock`, { recursive: true, force: true });
 
@@ -119,7 +119,7 @@ describe("attended goal controller", () => {
       expect(controller.activeRunId).toBeUndefined();
       expect(notifications.some((message) => message.includes("Repository writer lock was lost"))).toBe(true);
     }, { timeout: 3_000 });
-    const replacement = new AttendedGoalController({ dataRoot: root });
+    const replacement = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks") });
     const run = await replacement.start({ goal: "replacement writer" }, host);
     await replacement.stop(run.runId, host);
   });
@@ -340,7 +340,7 @@ describe("attended goal controller", () => {
     await controller.interrupt(host);
 
     let time = Date.parse("2026-07-12T01:00:00.000Z");
-    const resumedController = new AttendedGoalController({ dataRoot: root, now: () => new Date(++time), evaluatorRetryDelaysMs: [0, 0] });
+    const resumedController = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks"), now: () => new Date(++time), evaluatorRetryDelaysMs: [0, 0] });
     const resumedEntries: RunRecord[] = [];
     const resumedHost: GoalLoopHost = {
       ...host,
@@ -390,7 +390,7 @@ describe("attended goal controller", () => {
     expect(controller.activeRunId).toBeUndefined();
 
     let time = Date.parse("2026-07-12T02:00:00.000Z");
-    const resumedController = new AttendedGoalController({ dataRoot: root, now: () => new Date(++time), evaluatorRetryDelaysMs: [0, 0] });
+    const resumedController = new AttendedGoalController({ dataRoot: root, repositoryLockRoot: join(root, "repository-locks"), now: () => new Date(++time), evaluatorRetryDelaysMs: [0, 0] });
     const resumedHost = { ...host, cwd: project };
     const resumed = await resumedController.resume({ runId: started.runId, guidance: "Use option A." }, resumedHost);
     expect(resumed.state).toBe("running");

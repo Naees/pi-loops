@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ProjectBinding } from "../contracts/project-binding.js";
 import { sanitizedGitEnvironment } from "../worker/git-environment.js";
-import { acquireWriterLease, assertWriterLease, releaseWriterLease, type WriterLease } from "./lease.js";
+import {
+  acquireWriterLease,
+  assertWriterLeases,
+  combineWriterLeaseSignals,
+  releaseWriterLease,
+  releaseWriterLeases,
+  type WriterLease,
+} from "./lease.js";
 import { writerLeasePath } from "./run-store.js";
 
 const GIT_IDENTITY_TIMEOUT_MS = 10_000;
@@ -74,10 +82,15 @@ export async function resolveRepositoryLockIdentity(
   return { kind: "git", commonGitDirectory: await realpath(commonDirectory) };
 }
 
-export function repositoryWriterLeasePath(dataRoot: string, commonGitDirectory: string): string {
+export function resolveGlobalRepositoryLockRoot(): string {
+  return join(userInfo().homedir, ".pi", "agent", "pi-loops", "repository-writer-locks");
+}
+
+export function repositoryWriterLeasePath(repositoryLockRoot: string, commonGitDirectory: string): string {
+  if (!isAbsolute(repositoryLockRoot)) throw new Error("Repository lock root must be absolute");
   if (!isAbsolute(commonGitDirectory)) throw new Error("Git common directory must be absolute");
   const digest = createHash("sha256").update(commonGitDirectory).digest("hex");
-  return join(dataRoot, "repository-writer-locks", `${digest}.lease.json`);
+  return join(repositoryLockRoot, `${digest}.lease.json`);
 }
 
 function sameIdentity(left: RepositoryLockIdentity, right: RepositoryLockIdentity): boolean {
@@ -90,13 +103,14 @@ export async function acquireControllerWriterLock(
   binding: ProjectBinding,
   staleMs: number,
   now: Date = new Date(),
+  repositoryLockRoot: string = resolveGlobalRepositoryLockRoot(),
 ): Promise<ControllerWriterLock> {
   const identity = await resolveRepositoryLockIdentity(binding.projectRoot);
   let repositoryLease: WriterLease | undefined;
   let projectLease: WriterLease | undefined;
   try {
     if (identity.kind === "git") {
-      repositoryLease = await acquireWriterLease(repositoryWriterLeasePath(dataRoot, identity.commonGitDirectory), staleMs, now);
+      repositoryLease = await acquireWriterLease(repositoryWriterLeasePath(repositoryLockRoot, identity.commonGitDirectory), staleMs, now);
     }
     projectLease = await acquireWriterLease(writerLeasePath(dataRoot, binding.projectId), staleMs, now);
     const confirmedIdentity = await resolveRepositoryLockIdentity(binding.projectRoot);
@@ -105,9 +119,7 @@ export async function acquireControllerWriterLock(
       identity,
       projectLease,
       ...(repositoryLease === undefined ? {} : { repositoryLease }),
-      signal: repositoryLease === undefined
-        ? projectLease.signal
-        : AbortSignal.any([repositoryLease.signal, projectLease.signal]),
+      signal: combineWriterLeaseSignals(repositoryLease === undefined ? [projectLease] : [repositoryLease, projectLease]),
     };
   } catch (error) {
     if (projectLease) await releaseWriterLease(projectLease).catch(() => undefined);
@@ -116,28 +128,14 @@ export async function acquireControllerWriterLock(
   }
 }
 
+function controllerLeases(lock: ControllerWriterLock): WriterLease[] {
+  return lock.repositoryLease === undefined ? [lock.projectLease] : [lock.repositoryLease, lock.projectLease];
+}
+
 export async function assertControllerWriterLock(lock: ControllerWriterLock): Promise<void> {
-  if (lock.repositoryLease) await assertWriterLease(lock.repositoryLease);
-  await assertWriterLease(lock.projectLease);
-  if (lock.signal.aborted) {
-    const reason = lock.signal.reason;
-    throw reason instanceof Error ? reason : new Error("Controller writer lock is not active");
-  }
+  await assertWriterLeases(controllerLeases(lock));
 }
 
 export async function releaseControllerWriterLock(lock: ControllerWriterLock): Promise<void> {
-  const failures: unknown[] = [];
-  try {
-    await releaseWriterLease(lock.projectLease);
-  } catch (error) {
-    failures.push(error);
-  }
-  if (lock.repositoryLease) {
-    try {
-      await releaseWriterLease(lock.repositoryLease);
-    } catch (error) {
-      failures.push(error);
-    }
-  }
-  if (failures.length > 0) throw new AggregateError(failures, "Could not release controller writer lock");
+  await releaseWriterLeases(controllerLeases(lock));
 }

@@ -6,7 +6,7 @@ import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evalua
 import { recordRpcToolEvidence } from "../evidence/rpc-collector.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunRecord, RunState, ScheduleRecord } from "../shared/types.js";
-import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
+import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
 import { LeaseUnavailableError } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
@@ -67,6 +67,7 @@ export class UnattendedRunController {
   readonly #worktrees: WorktreeOperations;
   readonly #workers: WorkerManagerOperations;
   readonly #writerLeaseStaleMs: number;
+  readonly #repositoryLockRoot: string;
   #activeWorker: WorkerOperations | undefined;
   #activeRunId: string | undefined;
 
@@ -76,12 +77,14 @@ export class UnattendedRunController {
     worktrees?: WorktreeOperations;
     workers?: WorkerManagerOperations;
     writerLeaseStaleMs?: number;
+    repositoryLockRoot?: string;
   } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
     this.#worktrees = options.worktrees ?? new GitWorktreeManager();
     this.#workers = options.workers ?? new RpcWorkerManager();
     this.#writerLeaseStaleMs = options.writerLeaseStaleMs ?? WRITER_LEASE_STALE_MS;
+    this.#repositoryLockRoot = options.repositoryLockRoot ?? resolveGlobalRepositoryLockRoot();
     if (!Number.isSafeInteger(this.#writerLeaseStaleMs) || this.#writerLeaseStaleMs < 2_000) {
       throw new Error("Writer lease stale timeout must be a safe integer of at least 2000ms");
     }
@@ -351,7 +354,13 @@ export class UnattendedRunController {
   async #waitForWriterLock(binding: ProjectBinding, signal: AbortSignal): Promise<ControllerWriterLock> {
     while (!signal.aborted) {
       try {
-        return await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now());
+        return await acquireControllerWriterLock(
+          this.#dataRoot,
+          binding,
+          this.#writerLeaseStaleMs,
+          this.#now(),
+          this.#repositoryLockRoot,
+        );
       } catch (error) {
         if (!(error instanceof LeaseUnavailableError)) throw error;
         await abortableDelay(WRITER_RETRY_MS, signal, "Writer wait aborted");

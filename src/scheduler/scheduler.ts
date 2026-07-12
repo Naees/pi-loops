@@ -4,10 +4,10 @@ import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
 import { createScheduleId } from "../shared/ids.js";
 import type { RunBudget, ScheduleRecord } from "../shared/types.js";
-import { acquireWriterLease, assertWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
+import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
-import { ScheduleStore, scheduleClaimLeasePath, scheduleExecutionLeasePath, scheduleLeasePath } from "../storage/schedule-store.js";
+import { ScheduleStore, scheduleLeasePath } from "../storage/schedule-store.js";
 import { createUniqueRunId, resolveBudget } from "../controller/attended-goal-support.js";
 import {
   completeScheduleOccurrence,
@@ -15,6 +15,7 @@ import {
   reconcileMissedSchedule,
   triggerSchedule,
 } from "./coalescing.js";
+import { OccurrenceClaimManager, type OccurrenceClaims } from "./occurrence-claims.js";
 import { parseScheduleExpression, type ParsedScheduleExpression } from "./parser.js";
 
 const SCHEDULE_LEASE_STALE_MS = 30_000;
@@ -22,6 +23,13 @@ const CLAIM_LEASE_STALE_MS = 30_000;
 const CLAIM_RECHECK_MS = 5_000;
 const LEASE_RETRY_MS = 1_000;
 const MAX_TIMER_MS = 2_147_000_000;
+
+function unrefDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
+}
 
 export interface ScheduleCreateRequest {
   readonly expression: string;
@@ -47,12 +55,6 @@ export interface SchedulerHost {
   notify(message: string, level: "info" | "warning" | "error"): void;
 }
 
-interface OccurrenceClaims {
-  readonly execution: WriterLease;
-  readonly occurrence: WriterLease;
-  readonly signal: AbortSignal;
-}
-
 interface ActiveOccurrence {
   readonly abort: AbortController;
   readonly claims: OccurrenceClaims;
@@ -63,9 +65,9 @@ export class ScheduleController {
   readonly #dataRoot: string;
   readonly #now: () => Date;
   readonly #minimumRecurringMs: number;
-  readonly #claimLeaseStaleMs: number;
   readonly #claimRecheckMs: number;
   readonly #beforeOccurrenceLaunch: (() => Promise<void>) | undefined;
+  readonly #occurrenceClaims: OccurrenceClaimManager;
   #binding: ProjectBinding | undefined;
   #runner: ScheduleOccurrenceRunner | undefined;
   #host: SchedulerHost | undefined;
@@ -85,12 +87,13 @@ export class ScheduleController {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
     this.#minimumRecurringMs = options.minimumRecurringMs ?? DEFAULT_CONFIG.scheduling.minimumRecurringMs;
-    this.#claimLeaseStaleMs = options.claimLeaseStaleMs ?? CLAIM_LEASE_STALE_MS;
     this.#claimRecheckMs = options.claimRecheckMs ?? CLAIM_RECHECK_MS;
     this.#beforeOccurrenceLaunch = options.beforeOccurrenceLaunch;
-    if (!Number.isSafeInteger(this.#claimLeaseStaleMs) || this.#claimLeaseStaleMs < 2_000) {
-      throw new Error("Claim lease stale timeout must be a safe integer of at least 2000ms");
-    }
+    this.#occurrenceClaims = new OccurrenceClaimManager({
+      dataRoot: this.#dataRoot,
+      staleMs: options.claimLeaseStaleMs ?? CLAIM_LEASE_STALE_MS,
+      now: this.#now,
+    });
     if (!Number.isSafeInteger(this.#claimRecheckMs) || this.#claimRecheckMs <= 0) {
       throw new Error("Claim recheck interval must be a positive safe integer");
     }
@@ -222,10 +225,7 @@ export class ScheduleController {
       } catch (error) {
         if (!(error instanceof LeaseUnavailableError)) throw error;
         if (stopWhenStopping && this.#stopping) return;
-        await new Promise<void>((resolveDelay) => {
-          const timer = setTimeout(resolveDelay, LEASE_RETRY_MS);
-          timer.unref();
-        });
+        await unrefDelay(LEASE_RETRY_MS);
       }
     }
   }
@@ -238,7 +238,7 @@ export class ScheduleController {
         if ((schedule.state === "running" || schedule.state === "pending_coalesced") && !this.#active.has(schedule.scheduleId)) {
           let claims: OccurrenceClaims | undefined;
           try {
-            claims = await this.#acquireOccurrenceClaims(binding, schedule.scheduleId);
+            claims = await this.#occurrenceClaims.acquire(binding, schedule.scheduleId);
           } catch (error) {
             if (error instanceof LeaseUnavailableError) continue;
             throw error;
@@ -246,7 +246,7 @@ export class ScheduleController {
           try {
             await store.save(reconcileMissedSchedule(schedule, this.#now()));
           } finally {
-            await this.#releaseOccurrenceClaims(claims);
+            await this.#occurrenceClaims.release(claims);
           }
           continue;
         }
@@ -270,20 +270,20 @@ export class ScheduleController {
         const activeOccurrence = this.#active.get(schedule.scheduleId);
         const locallyActive = activeOccurrence !== undefined;
         if ((schedule.state === "running" || schedule.state === "pending_coalesced") && !locallyActive) continue;
-        if (activeOccurrence) await this.#assertOccurrenceClaims(activeOccurrence.claims);
+        if (activeOccurrence) await this.#occurrenceClaims.assert(activeOccurrence.claims);
         if (schedule.state === "enabled" && writerClaimed) continue;
         const runId = await createUniqueRunId(runStore);
         let claims: OccurrenceClaims | undefined;
         if (schedule.state === "enabled") {
           try {
-            claims = await this.#acquireOccurrenceClaims(binding, schedule.scheduleId);
+            claims = await this.#occurrenceClaims.acquire(binding, schedule.scheduleId);
           } catch (error) {
             if (error instanceof LeaseUnavailableError) continue;
             throw error;
           }
         }
         try {
-          if (claims) await this.#assertOccurrenceClaims(claims);
+          if (claims) await this.#occurrenceClaims.assert(claims);
           if (this.#stopping) continue;
           const decision = triggerSchedule(schedule, runId, this.#now());
           if (decision.action === "ignored") continue;
@@ -299,7 +299,7 @@ export class ScheduleController {
             claims = undefined;
           }
         } finally {
-          if (claims) await this.#releaseOccurrenceClaims(claims);
+          if (claims) await this.#occurrenceClaims.release(claims);
         }
       }
     });
@@ -315,7 +315,7 @@ export class ScheduleController {
           );
         }
         starts.shift();
-        if (!launched) await this.#releaseOccurrenceClaims(start.claims).catch(() => undefined);
+        if (!launched) await this.#occurrenceClaims.release(start.claims).catch(() => undefined);
       }
       await this.#armNextTimer();
     } catch (error) {
@@ -327,16 +327,16 @@ export class ScheduleController {
       }
       throw error;
     } finally {
-      await Promise.all(starts.map((start) => this.#releaseOccurrenceClaims(start.claims).catch(() => undefined)));
+      await Promise.all(starts.map((start) => this.#occurrenceClaims.release(start.claims).catch(() => undefined)));
     }
   }
 
   async #interruptUnlaunchedOccurrence(scheduleId: string, runId: string, claims: OccurrenceClaims): Promise<void> {
     const binding = this.#binding;
     if (!binding) return;
-    await this.#assertOccurrenceClaims(claims);
+    await this.#occurrenceClaims.assert(claims);
     await this.#withMutableStore(binding, async (store) => {
-      await this.#assertOccurrenceClaims(claims);
+      await this.#occurrenceClaims.assert(claims);
       const current = await store.load(scheduleId);
       if (!current || current.activeRunId !== runId) return;
       await store.save(interruptScheduleOccurrence(current, runId, this.#now()));
@@ -367,7 +367,7 @@ export class ScheduleController {
       } finally {
         claims.signal.removeEventListener("abort", handleClaimLoss);
         if (!claimTransferred) {
-          await this.#releaseOccurrenceClaims(claims).catch((error: unknown) => {
+          await this.#occurrenceClaims.release(claims).catch((error: unknown) => {
             if (!claims.signal.aborted) {
               this.#host?.notify(`${schedule.scheduleId}: occurrence claim release failed — ${error instanceof Error ? error.message : String(error)}`, "error");
             }
@@ -395,15 +395,12 @@ export class ScheduleController {
   ): Promise<boolean> {
     for (;;) {
       try {
-        await this.#assertOccurrenceClaims(claims);
+        await this.#occurrenceClaims.assert(claims);
         return await this.#queue.run(async () => this.#settleOccurrence(scheduleId, runId, result, claims));
       } catch (error) {
         if (!(error instanceof LeaseUnavailableError)) throw error;
         this.#host?.notify(`${scheduleId}: waiting to persist scheduled occurrence result`, "warning");
-        await new Promise<void>((resolveDelay) => {
-          const timer = setTimeout(resolveDelay, LEASE_RETRY_MS);
-          timer.unref();
-        });
+        await unrefDelay(LEASE_RETRY_MS);
       }
     }
   }
@@ -416,10 +413,10 @@ export class ScheduleController {
   ): Promise<boolean> {
     const binding = this.#binding;
     if (!binding) return false;
-    await this.#assertOccurrenceClaims(claims);
+    await this.#occurrenceClaims.assert(claims);
     let replacement: { schedule: ScheduleRecord; runId: string } | undefined;
     await this.#withMutableStore(binding, async (store) => {
-      await this.#assertOccurrenceClaims(claims);
+      await this.#occurrenceClaims.assert(claims);
       const current = await store.load(scheduleId);
       if (!current || current.activeRunId !== runId) return;
       if (result.status === "interrupted") {
@@ -503,49 +500,6 @@ export class ScheduleController {
       this.#host?.notify(`Pi Loops scheduler failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       if (!this.#stopping) this.#scheduleTimer(LEASE_RETRY_MS);
     }
-  }
-
-  async #acquireOccurrenceClaims(binding: ProjectBinding, scheduleId: string): Promise<OccurrenceClaims> {
-    const execution = await acquireWriterLease(
-      scheduleExecutionLeasePath(this.#dataRoot, binding.projectId),
-      this.#claimLeaseStaleMs,
-      this.#now(),
-    );
-    try {
-      const occurrence = await acquireWriterLease(
-        scheduleClaimLeasePath(this.#dataRoot, binding.projectId, scheduleId),
-        this.#claimLeaseStaleMs,
-        this.#now(),
-      );
-      return { execution, occurrence, signal: AbortSignal.any([execution.signal, occurrence.signal]) };
-    } catch (error) {
-      await releaseWriterLease(execution).catch(() => undefined);
-      throw error;
-    }
-  }
-
-  async #assertOccurrenceClaims(claims: OccurrenceClaims): Promise<void> {
-    await assertWriterLease(claims.execution);
-    await assertWriterLease(claims.occurrence);
-    if (claims.signal.aborted) {
-      const reason = claims.signal.reason;
-      throw reason instanceof Error ? reason : new Error("Schedule occurrence claims are not active");
-    }
-  }
-
-  async #releaseOccurrenceClaims(claims: OccurrenceClaims): Promise<void> {
-    const failures: unknown[] = [];
-    try {
-      await releaseWriterLease(claims.occurrence);
-    } catch (error) {
-      failures.push(error);
-    }
-    try {
-      await releaseWriterLease(claims.execution);
-    } catch (error) {
-      failures.push(error);
-    }
-    if (failures.length > 0) throw new AggregateError(failures, "Could not release schedule occurrence claims");
   }
 
   async #withMutableStore<T>(binding: ProjectBinding, operation: (store: ScheduleStore) => Promise<T>): Promise<T> {

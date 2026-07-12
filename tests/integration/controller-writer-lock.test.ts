@@ -8,6 +8,7 @@ import {
   acquireControllerWriterLock,
   releaseControllerWriterLock,
   repositoryWriterLeasePath,
+  resolveGlobalRepositoryLockRoot,
   resolveRepositoryLockIdentity,
   type ControllerWriterLock,
 } from "../../src/storage/controller-writer-lock.js";
@@ -122,15 +123,38 @@ describe("controller repository writer lock", () => {
     if (identity.kind !== "git") throw new Error("Expected Git identity");
     const path = repositoryWriterLeasePath(dataRoot, identity.commonGitDirectory);
     expect(path).not.toContain(identity.commonGitDirectory);
-    expect(path).toMatch(/repository-writer-locks\/[0-9a-f]{64}\.lease\.json$/);
+    expect(path.startsWith(`${dataRoot}/`)).toBe(true);
+    expect(path).toMatch(/[0-9a-f]{64}\.lease\.json$/);
 
-    const first = await acquireControllerWriterLock(dataRoot, rootBinding, 30_000);
+    const first = await acquireControllerWriterLock(dataRoot, rootBinding, 30_000, new Date(), dataRoot);
     activeLocks.push(first);
-    await expect(acquireControllerWriterLock(dataRoot, linkedBinding, 30_000)).rejects.toBeInstanceOf(LeaseUnavailableError);
+    await expect(acquireControllerWriterLock(dataRoot, linkedBinding, 30_000, new Date(), dataRoot)).rejects.toBeInstanceOf(LeaseUnavailableError);
     await releaseControllerWriterLock(first);
     activeLocks.splice(activeLocks.indexOf(first), 1);
-    const second = await acquireControllerWriterLock(dataRoot, linkedBinding, 30_000);
+    const second = await acquireControllerWriterLock(dataRoot, linkedBinding, 30_000, new Date(), dataRoot);
     activeLocks.push(second);
+  });
+
+  it("coordinates repository writers across different Pi data roots", async () => {
+    const { root, repositoryRoot, linkedWorktree } = await repository();
+    const lockRoot = join(root, "user-global-locks");
+    const first = await acquireControllerWriterLock(
+      join(root, "pi-data-a"),
+      await resolveProjectBinding(repositoryRoot),
+      30_000,
+      new Date(),
+      lockRoot,
+    );
+    activeLocks.push(first);
+
+    await expect(acquireControllerWriterLock(
+      join(root, "pi-data-b"),
+      await resolveProjectBinding(linkedWorktree),
+      30_000,
+      new Date(),
+      lockRoot,
+    )).rejects.toBeInstanceOf(LeaseUnavailableError);
+    expect(resolveGlobalRepositoryLockRoot().endsWith(join(".pi", "agent", "pi-loops", "repository-writer-locks"))).toBe(true);
   });
 
   it("releases the repository guard when project-store acquisition fails", async () => {
@@ -141,7 +165,7 @@ describe("controller repository writer lock", () => {
     if (identity.kind !== "git") throw new Error("Expected Git identity");
     const projectLease = await acquireWriterLease(writerLeasePath(dataRoot, binding.projectId), 30_000);
     try {
-      await expect(acquireControllerWriterLock(dataRoot, binding, 30_000)).rejects.toBeInstanceOf(LeaseUnavailableError);
+      await expect(acquireControllerWriterLock(dataRoot, binding, 30_000, new Date(), dataRoot)).rejects.toBeInstanceOf(LeaseUnavailableError);
       const repositoryLease = await acquireWriterLease(repositoryWriterLeasePath(dataRoot, identity.commonGitDirectory), 30_000);
       await releaseWriterLease(repositoryLease);
     } finally {
@@ -159,7 +183,7 @@ describe("controller repository writer lock", () => {
     const child = spawn(process.execPath, [fixture, path], { stdio: ["pipe", "pipe", "pipe"] });
     try {
       await waitForReady(child);
-      await expect(acquireControllerWriterLock(dataRoot, await resolveProjectBinding(linkedWorktree), 30_000))
+      await expect(acquireControllerWriterLock(dataRoot, await resolveProjectBinding(linkedWorktree), 30_000, new Date(), dataRoot))
         .rejects.toBeInstanceOf(LeaseUnavailableError);
     } finally {
       child.stdin.end();

@@ -154,3 +154,31 @@ export async function releaseWriterLease(lease: WriterLease): Promise<void> {
   handle.active = false;
   handles.delete(lease);
 }
+
+export function combineWriterLeaseSignals(leases: readonly WriterLease[]): AbortSignal {
+  const first = leases[0];
+  if (!first) throw new Error("At least one writer lease is required");
+  return leases.length === 1 ? first.signal : AbortSignal.any(leases.map((lease) => lease.signal));
+}
+
+export async function assertWriterLeases(leases: readonly WriterLease[]): Promise<void> {
+  if (leases.length === 0) throw new Error("At least one writer lease is required");
+  for (const lease of leases) await assertWriterLease(lease);
+  const compromised = leases.find((lease) => lease.signal.aborted);
+  if (compromised) {
+    const reason = compromised.signal.reason;
+    throw reason instanceof Error ? reason : new LeaseOwnershipError("Writer lease is not active");
+  }
+}
+
+export async function releaseWriterLeases(leasesInAcquisitionOrder: readonly WriterLease[]): Promise<void> {
+  const failures: unknown[] = [];
+  for (const lease of [...leasesInAcquisitionOrder].reverse()) {
+    try {
+      await releaseWriterLease(lease);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, "Could not release writer leases");
+}

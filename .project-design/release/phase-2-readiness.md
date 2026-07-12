@@ -17,7 +17,7 @@
 - Git worktree/review-branch creation, clean-tree enforcement, commit preservation, and no auto-merge.
 - Scheduled run state/evidence/evaluation orchestration with two-phase review-commit/worktree persistence.
 - Strict unattended worker metadata and retention exclusion for unresolved worktrees.
-- Cross-process repository-writer guards keyed by hashed canonical Git common directories, shared by attended and unattended controllers within one Pi data root while preserving project-keyed storage leases. Non-Git attended runs remain project-locked and are not dynamically reclassified if repository topology changes mid-run.
+- Cross-process repository-writer guards keyed by hashed canonical Git common directories in a per-user global lock namespace, shared by attended and unattended controllers across Pi data roots while preserving project-keyed storage leases. Non-Git attended runs remain project-locked and are not dynamically reclassified if repository topology changes mid-run.
 - Cross-process schedule occurrence and project-execution claims with live-owner reconciliation, compromise aborts, stale-claim takeover, and claim transfer across coalesced replacements.
 
 ## Deliberate public boundary
@@ -28,7 +28,6 @@ This boundary remains until the blockers below are resolved and a packed schedul
 
 ## Remaining blockers
 
-- Repository-writer coordination across Pi processes intentionally configured with different Pi data roots; the canonical Git guard currently coordinates all normal processes sharing one data root.
 - Scheduled run restart/resume that validates and reuses run ID, branch, worktree, and Pi session.
 - Production-process descendant cleanup tests using `RpcWorkerClient`/`RpcWorkerManager`, not only the lifecycle spike client.
 - Product schedule confirmation/status/delete behavior tests before enabling public UX.
@@ -37,11 +36,11 @@ This boundary remains until the blockers below are resolved and a packed schedul
 
 ## Current validation
 
-- `npm run check`: passed (strict source/script typechecks; 187 tests).
+- `npm run check`: passed (strict source/script typechecks; 188 tests).
 - Five consecutive full-suite reruns: passed without flakes.
-- `npm run test:coverage`: passed (85.88% lines, 74.47% branches); coverage was used to target evaluator, RPC, UI, scheduler, and unattended gaps rather than as a release threshold.
+- `npm run test:coverage`: passed (86.06% lines, 74.48% branches); coverage was used to target evaluator, RPC, UI, scheduler, and unattended gaps rather than as a release threshold.
 - `npm run test:packed`: passed; existing `/loops status` behavior restored.
-- `npm run pack:inspect`: passed; 44 intended package files.
+- `npm run pack:inspect`: passed; 45 intended package files.
 - `npm run test:e2e:attended`: passed.
 - `npm run spike:rpc:lifecycle`: passed, including forced-parent-death cleanup 10/10 on macOS/Pi 0.80.6.
 - `npm audit`: passed with zero vulnerabilities.

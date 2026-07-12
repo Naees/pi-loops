@@ -104,7 +104,7 @@ describe("unattended run controller", () => {
     const { dataRoot, projectRoot, projectId, entries, host, schedule } = await harness();
     const git = worktrees(projectRoot);
     const rpc = workers();
-    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
 
     await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
       .resolves.toEqual({ status: "finished" });
@@ -127,7 +127,7 @@ describe("unattended run controller", () => {
     const git = worktrees(projectRoot);
     git.inspectRepository.mockRejectedValue(new NonGitRepositoryError());
     const rpc = workers();
-    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
 
     await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
       .resolves.toEqual({ status: "interrupted" });
@@ -140,7 +140,7 @@ describe("unattended run controller", () => {
     const git = worktrees(projectRoot);
     git.requireCleanRepository.mockRejectedValue(new DirtyRepositoryError());
     const rpc = workers();
-    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
 
     await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
       .resolves.toEqual({ status: "interrupted" });
@@ -153,7 +153,7 @@ describe("unattended run controller", () => {
     const git = worktrees(projectRoot);
     git.removeClean.mockRejectedValue(new WorktreeNeedsUserError("worktree changed after commit"));
     const rpc = workers();
-    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
 
     await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
       .resolves.toEqual({ status: "interrupted" });
@@ -171,7 +171,7 @@ describe("unattended run controller", () => {
     const git = worktrees(projectRoot);
     const rpc = workers();
     rpc.manager.launch.mockRejectedValue(new Error("worker launch failed"));
-    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
 
     await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
       .rejects.toThrow("worker launch failed");
@@ -195,6 +195,7 @@ describe("unattended run controller", () => {
     }));
     const controller = new UnattendedRunController({
       dataRoot,
+      repositoryLockRoot: join(dataRoot, "repository-locks"),
       worktrees: git,
       workers: rpc.manager,
       writerLeaseStaleMs: 2_000,
@@ -203,14 +204,14 @@ describe("unattended run controller", () => {
     await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"));
     const identity = await resolveRepositoryLockIdentity(projectRoot);
     if (identity.kind !== "git") throw new Error("Expected Git identity");
-    await rm(`${repositoryWriterLeasePath(dataRoot, identity.commonGitDirectory)}.lock`, { recursive: true, force: true });
+    await rm(`${repositoryWriterLeasePath(join(dataRoot, "repository-locks"), identity.commonGitDirectory)}.lock`, { recursive: true, force: true });
 
     await expect(running).rejects.toBeInstanceOf(Error);
     expect(rpc.worker.stop).toHaveBeenCalled();
     expect(controller.activeRunId).toBeUndefined();
     expect(entries.some((entry) => entry.state === "failed")).toBe(false);
     expect((await new RunStore(dataRoot, projectId).load("run_1234abcd"))?.state).toBe("running");
-    const lock = await acquireControllerWriterLock(dataRoot, { projectRoot, projectId }, 30_000);
+    const lock = await acquireControllerWriterLock(dataRoot, { projectRoot, projectId }, 30_000, new Date(), join(dataRoot, "repository-locks"));
     await releaseControllerWriterLock(lock);
   }, 5_000);
 
@@ -219,7 +220,7 @@ describe("unattended run controller", () => {
     const git = worktrees(projectRoot);
     const rpc = workers();
     rpc.worker.runCycle.mockRejectedValue(new WorkerInteractionRequiredError("No parent UI"));
-    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
 
     await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
       .resolves.toEqual({ status: "interrupted" });

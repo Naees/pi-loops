@@ -6,7 +6,7 @@ import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evalua
 import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunBudget, RunRecord, RunState } from "../shared/types.js";
-import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
+import { acquireControllerWriterLock, assertControllerWriterLock, releaseControllerWriterLock, resolveGlobalRepositoryLockRoot, type ControllerWriterLock } from "../storage/controller-writer-lock.js";
 import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore, writerLeasePath } from "../storage/run-store.js";
@@ -62,15 +62,23 @@ export class AttendedGoalController {
   readonly #now: () => Date;
   readonly #evaluatorRetryDelaysMs: readonly number[];
   readonly #writerLeaseStaleMs: number;
+  readonly #repositoryLockRoot: string;
   #active: ActiveGoal | undefined;
   #generation = 0;
   readonly #queue = new AsyncSerialQueue();
 
-  constructor(options: { dataRoot?: string; now?: () => Date; evaluatorRetryDelaysMs?: readonly number[]; writerLeaseStaleMs?: number } = {}) {
+  constructor(options: {
+    dataRoot?: string;
+    now?: () => Date;
+    evaluatorRetryDelaysMs?: readonly number[];
+    writerLeaseStaleMs?: number;
+    repositoryLockRoot?: string;
+  } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
     this.#evaluatorRetryDelaysMs = options.evaluatorRetryDelaysMs ?? [250, 1_000];
     this.#writerLeaseStaleMs = options.writerLeaseStaleMs ?? WRITER_LEASE_STALE_MS;
+    this.#repositoryLockRoot = options.repositoryLockRoot ?? resolveGlobalRepositoryLockRoot();
     if (!Number.isSafeInteger(this.#writerLeaseStaleMs) || this.#writerLeaseStaleMs < 2_000) {
       throw new Error("Writer lease stale timeout must be a safe integer of at least 2000ms");
     }
@@ -93,7 +101,7 @@ export class AttendedGoalController {
 
       const binding = await resolveProjectBinding(host.cwd);
       const { projectRoot, projectId } = binding;
-      const writerLock = await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now());
+      const writerLock = await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now(), this.#repositoryLockRoot);
       const store = new RunStore(this.#dataRoot, projectId, writerLock.projectLease);
 
       try {
@@ -291,7 +299,7 @@ export class AttendedGoalController {
 
       const binding = await resolveProjectBinding(host.cwd);
       const { projectId } = binding;
-      const writerLock = await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now());
+      const writerLock = await acquireControllerWriterLock(this.#dataRoot, binding, this.#writerLeaseStaleMs, this.#now(), this.#repositoryLockRoot);
       const store = new RunStore(this.#dataRoot, projectId, writerLock.projectLease);
 
       try {
