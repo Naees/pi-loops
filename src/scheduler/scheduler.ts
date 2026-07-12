@@ -1,9 +1,10 @@
 import { DEFAULT_CONFIG } from "../config/config.js";
+import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
 import { createScheduleId } from "../shared/ids.js";
 import type { RunBudget, ScheduleRecord } from "../shared/types.js";
-import { acquireWriterLease, releaseWriterLease, type WriterLease } from "../storage/lease.js";
+import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
 import { RunStore } from "../storage/run-store.js";
 import { ScheduleStore, scheduleLeasePath } from "../storage/schedule-store.js";
@@ -59,7 +60,7 @@ export class ScheduleController {
   #timer: NodeJS.Timeout | undefined;
   #stopping = false;
   #active = new Map<string, ActiveOccurrence>();
-  #tail: Promise<void> = Promise.resolve();
+  readonly #queue = new AsyncSerialQueue();
 
   constructor(options: { dataRoot?: string; now?: () => Date; minimumRecurringMs?: number } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
@@ -75,7 +76,7 @@ export class ScheduleController {
   }
 
   async start(host: SchedulerHost, runner: ScheduleOccurrenceRunner): Promise<void> {
-    await this.#exclusive(async () => {
+    await this.#queue.run(async () => {
       if (this.#binding) throw new Error("Schedule controller is already started");
       this.#binding = await resolveProjectBinding(host.cwd);
       this.#runner = runner;
@@ -94,7 +95,7 @@ export class ScheduleController {
   }
 
   async create(request: ScheduleCreateRequest, host: Pick<SchedulerHost, "cwd">): Promise<ScheduleRecord> {
-    return this.#exclusive(async () => {
+    return this.#queue.run(async () => {
       const binding = await resolveProjectBinding(host.cwd);
       const parsed = request.parsedExpression ?? this.preview(request.expression);
       const contract = createCompletionContract(request.goal, request.verifierCommands ?? [], request.constraints ?? []);
@@ -138,21 +139,26 @@ export class ScheduleController {
       const first = this.#active.entries().next().value as [string, ActiveOccurrence] | undefined;
       if (!first) return undefined;
       first[1].abort.abort();
+      await first[1].promise;
       return first[0];
     }
     const direct = this.#active.get(id);
     if (direct) {
       direct.abort.abort();
+      await direct.promise;
       return id;
     }
     const schedule = (await this.list(cwd)).find((candidate) => candidate.activeRunId === id);
     if (!schedule) return undefined;
-    this.#active.get(schedule.scheduleId)?.abort.abort();
+    const occurrence = this.#active.get(schedule.scheduleId);
+    if (!occurrence) return undefined;
+    occurrence.abort.abort();
+    await occurrence.promise;
     return schedule.scheduleId;
   }
 
   async delete(scheduleId: string, cwd: string): Promise<void> {
-    await this.#exclusive(async () => {
+    await this.#queue.run(async () => {
       const binding = await resolveProjectBinding(cwd);
       await this.#withMutableStore(binding, async (store) => {
         const schedule = await store.load(scheduleId);
@@ -172,7 +178,7 @@ export class ScheduleController {
     this.#timer = undefined;
     for (const occurrence of this.#active.values()) occurrence.abort.abort();
     await Promise.allSettled([...this.#active.values()].map((occurrence) => occurrence.promise));
-    await this.#exclusive(async () => {
+    await this.#queue.run(async () => {
       this.#binding = undefined;
       this.#runner = undefined;
       this.#host = undefined;
@@ -227,17 +233,37 @@ export class ScheduleController {
         result = { status: "interrupted" };
         this.#host?.notify(`${schedule.scheduleId}: scheduled occurrence failed — ${error instanceof Error ? error.message : String(error)}`, "error");
       }
-      await this.#exclusive(async () => this.#settleOccurrence(schedule.scheduleId, runId, result));
+      await this.#settleOccurrenceWithRetry(schedule.scheduleId, runId, result);
     })().finally(() => {
       if (this.#active.get(schedule.scheduleId)?.promise !== promise) return;
       this.#active.delete(schedule.scheduleId);
       if (!this.#stopping) {
-        void this.#exclusive(async () => this.#processDue()).catch((error: unknown) => {
+        void this.#queue.run(async () => this.#processDue()).catch((error: unknown) => {
           this.#host?.notify(`Pi Loops scheduler failed: ${error instanceof Error ? error.message : String(error)}`, "error");
         });
       }
     });
     this.#active.set(schedule.scheduleId, { abort, promise });
+  }
+
+  async #settleOccurrenceWithRetry(
+    scheduleId: string,
+    runId: string,
+    result: ScheduleOccurrenceResult,
+  ): Promise<void> {
+    for (;;) {
+      try {
+        await this.#queue.run(async () => this.#settleOccurrence(scheduleId, runId, result));
+        return;
+      } catch (error) {
+        if (!(error instanceof LeaseUnavailableError)) throw error;
+        this.#host?.notify(`${scheduleId}: waiting to persist scheduled occurrence result`, "warning");
+        await new Promise<void>((resolveDelay) => {
+          const timer = setTimeout(resolveDelay, LEASE_RETRY_MS);
+          timer.unref();
+        });
+      }
+    }
   }
 
   async #settleOccurrence(scheduleId: string, runId: string, result: ScheduleOccurrenceResult): Promise<void> {
@@ -279,16 +305,21 @@ export class ScheduleController {
       .sort((left, right) => left - right)[0];
     if (nextMs === undefined) return;
     const delayMs = Math.max(0, Math.min(nextMs - this.#now().getTime(), MAX_TIMER_MS));
-    this.#timer = setTimeout(() => {
-      void this.#exclusive(async () => this.#processDue()).catch((error: unknown) => {
-        this.#host?.notify(`Pi Loops scheduler failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-        if (!this.#stopping) {
-          this.#timer = setTimeout(() => void this.#exclusive(async () => this.#processDue()), LEASE_RETRY_MS);
-          this.#timer.unref();
-        }
-      });
-    }, delayMs);
+    this.#scheduleTimer(delayMs);
+  }
+
+  #scheduleTimer(delayMs: number): void {
+    this.#timer = setTimeout(() => void this.#runTimer(), delayMs);
     this.#timer.unref();
+  }
+
+  async #runTimer(): Promise<void> {
+    try {
+      await this.#queue.run(async () => this.#processDue());
+    } catch (error) {
+      this.#host?.notify(`Pi Loops scheduler failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+      if (!this.#stopping) this.#scheduleTimer(LEASE_RETRY_MS);
+    }
   }
 
   async #withMutableStore<T>(binding: ProjectBinding, operation: (store: ScheduleStore) => Promise<T>): Promise<T> {
@@ -309,9 +340,4 @@ export class ScheduleController {
     throw new Error("Could not allocate a unique schedule ID");
   }
 
-  #exclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.#tail.then(operation, operation);
-    this.#tail = result.then(() => undefined, () => undefined);
-    return result;
-  }
 }

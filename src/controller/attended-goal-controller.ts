@@ -1,9 +1,10 @@
-import { realpath } from "node:fs/promises";
 import { createCompletionContract, inferBacktickedVerifierCommands, type CompletionContract } from "../contracts/completion-contract.js";
+import { resolveProjectBinding } from "../contracts/project-binding.js";
 import { inferProjectVerifierCommands } from "../contracts/project-inference.js";
 import { CycleEvidenceCollector, requiredEvidencePassed, type ObservedToolResult } from "../evidence/collector.js";
 import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evaluator.js";
-import { createProjectId, isRunId } from "../shared/ids.js";
+import { AsyncSerialQueue } from "../shared/async-queue.js";
+import { isRunId } from "../shared/ids.js";
 import type { RunBudget, RunRecord, RunState } from "../shared/types.js";
 import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
 import { resolvePiLoopsDataRoot } from "../storage/paths.js";
@@ -59,7 +60,7 @@ export class AttendedGoalController {
   readonly #evaluatorRetryDelaysMs: readonly number[];
   #active: ActiveGoal | undefined;
   #generation = 0;
-  #tail: Promise<void> = Promise.resolve();
+  readonly #queue = new AsyncSerialQueue();
 
   constructor(options: { dataRoot?: string; now?: () => Date; evaluatorRetryDelaysMs?: readonly number[] } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
@@ -79,11 +80,10 @@ export class AttendedGoalController {
   }
 
   async start(request: GoalStartRequest, host: GoalLoopHost): Promise<RunRecord> {
-    return this.#exclusive(async () => {
+    return this.#queue.run(async () => {
       if (this.#active) throw new Error(`A goal loop is already active: ${this.#active.run.runId}`);
 
-      const projectRoot = await realpath(host.cwd);
-      const projectId = createProjectId(projectRoot);
+      const { projectRoot, projectId } = await resolveProjectBinding(host.cwd);
       const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
       const store = new RunStore(this.#dataRoot, projectId, lease);
 
@@ -138,7 +138,7 @@ export class AttendedGoalController {
   }
 
   async settle(workerSummary: string, evaluator: CompletionEvaluator, host: GoalLoopHost): Promise<void> {
-    await this.#exclusive(async () => {
+    await this.#queue.run(async () => {
       const active = this.#active;
       if (!active || active.run.state !== "running" || active.stopRequested) return;
       const generation = active.generation;
@@ -248,7 +248,7 @@ export class AttendedGoalController {
       throw new Error(`Active run is ${current.run.runId}, not ${runId}`);
     }
     this.requestStop();
-    return this.#exclusive(async () => {
+    return this.#queue.run(async () => {
       const active = this.#active;
       if (!active) return undefined;
       host.abortAgent();
@@ -259,7 +259,7 @@ export class AttendedGoalController {
 
   async interrupt(host: GoalLoopHost): Promise<void> {
     this.requestStop();
-    await this.#exclusive(async () => {
+    await this.#queue.run(async () => {
       const active = this.#active;
       if (!active) return;
       if (canTransition(active.run.state, "interrupted")) {
@@ -271,12 +271,11 @@ export class AttendedGoalController {
   }
 
   async resume(request: GoalResumeRequest, host: GoalLoopHost): Promise<RunRecord> {
-    return this.#exclusive(async () => {
+    return this.#queue.run(async () => {
       if (this.#active) throw new Error(`A goal loop is already active: ${this.#active.run.runId}`);
       if (request.runId !== undefined && !isRunId(request.runId)) throw new Error(`Invalid run ID: ${request.runId}`);
 
-      const projectRoot = await realpath(host.cwd);
-      const projectId = createProjectId(projectRoot);
+      const { projectId } = await resolveProjectBinding(host.cwd);
       const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
       const store = new RunStore(this.#dataRoot, projectId, lease);
 
@@ -350,7 +349,7 @@ export class AttendedGoalController {
 
   async reconcile(cwd: string): Promise<RunRecord[]> {
     if (this.#active) return [];
-    return this.#exclusive(async () => {
+    return this.#queue.run(async () => {
       let mutable: { lease: WriterLease; store: RunStore } | undefined;
       try {
         mutable = await this.#openMutableStore(cwd);
@@ -367,7 +366,7 @@ export class AttendedGoalController {
   }
 
   async clean(host: Pick<GoalLoopHost, "cwd">): Promise<string[]> {
-    return this.#exclusive(async () => {
+    return this.#queue.run(async () => {
       const { lease, store } = await this.#openMutableStore(host.cwd);
       try {
         return await store.enforceRetention(DEFAULT_CONFIG.retention.terminalRunsPerProject, retentionEligible);
@@ -381,7 +380,7 @@ export class AttendedGoalController {
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
     if (this.#active?.run.runId === runId) throw new Error(`Stop the active run before deleting it: ${runId}`);
 
-    await this.#exclusive(async () => {
+    await this.#queue.run(async () => {
       const { lease, store } = await this.#openMutableStore(host.cwd);
       try {
         if ((await store.load(runId)) === undefined) throw new Error(`Run not found: ${runId}`);
@@ -394,8 +393,7 @@ export class AttendedGoalController {
 
   async status(host: Pick<GoalLoopHost, "cwd">): Promise<string> {
     if (!this.#active) await this.reconcile(host.cwd);
-    const projectRoot = await realpath(host.cwd);
-    const projectId = createProjectId(projectRoot);
+    const { projectId } = await resolveProjectBinding(host.cwd);
     const store = new RunStore(this.#dataRoot, projectId);
     const runs = (await store.list()).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     if (runs.length === 0) return "No Pi Loops goal runs are stored for this project.";
@@ -444,8 +442,7 @@ export class AttendedGoalController {
   }
 
   async #openMutableStore(cwd: string): Promise<{ lease: WriterLease; store: RunStore }> {
-    const projectRoot = await realpath(cwd);
-    const projectId = createProjectId(projectRoot);
+    const { projectId } = await resolveProjectBinding(cwd);
     const lease = await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
     return { lease, store: new RunStore(this.#dataRoot, projectId, lease) };
   }
@@ -526,7 +523,7 @@ export class AttendedGoalController {
         active.stopRequested = true;
         active.evaluatorAbort.abort();
         host.abortAgent();
-        void this.#exclusive(async () => {
+        void this.#queue.run(async () => {
           if (this.#active?.generation !== active.generation) return;
           await this.#finish(active, "budget_exhausted", "Run exhausted its active_time budget", host);
         }).catch((error: unknown) => {
@@ -552,10 +549,5 @@ export class AttendedGoalController {
     return snapshot;
   }
 
-  #exclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.#tail.then(operation, operation);
-    this.#tail = result.then(() => undefined, () => undefined);
-    return result;
-  }
 }
 

@@ -48,6 +48,50 @@ describe("worker UI relay", () => {
       .resolves.toEqual({ handled: false, reason: "Malformed worker UI request" });
   });
 
+  it.each([
+    { method: "select", payload: { title: "Choose", options: ["first", "second"] }, expected: "first" },
+    { method: "input", payload: { title: "Value", placeholder: "optional" }, expected: "input" },
+    { method: "editor", payload: { title: "Edit", prefill: "initial" }, expected: "editor" },
+  ])("relays $method responses", async ({ method, payload, expected }) => {
+    const host = ui();
+    await expect(relayWorkerUiRequest({
+      type: "extension_ui_request",
+      id: "request-1",
+      method,
+      ...payload,
+    }, host, new AbortController().signal)).resolves.toEqual({
+      handled: true,
+      response: { type: "extension_ui_response", id: "request-1", value: expected },
+    });
+  });
+
+  it("rejects oversized text and invalid select options", async () => {
+    const host = ui();
+    const oversized = "界".repeat(6_000);
+    await expect(relayWorkerUiRequest({
+      type: "extension_ui_request",
+      id: "request-1",
+      method: "confirm",
+      title: oversized,
+      message: "Continue?",
+    }, host, new AbortController().signal)).resolves.toEqual({
+      handled: false,
+      reason: "Worker UI request contains invalid or oversized text",
+    });
+    for (const options of [[], Array.from({ length: 101 }, () => "option"), [1], [oversized]]) {
+      await expect(relayWorkerUiRequest({
+        type: "extension_ui_request",
+        id: "request-1",
+        method: "select",
+        title: "Choose",
+        options,
+      }, host, new AbortController().signal)).resolves.toEqual({
+        handled: false,
+        reason: "Worker select request has invalid options",
+      });
+    }
+  });
+
   it("fails closed when relay is aborted", async () => {
     const controller = new AbortController();
     const host = ui();

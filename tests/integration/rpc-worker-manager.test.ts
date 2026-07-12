@@ -24,7 +24,7 @@ function hostUi(): ParentWorkerUi {
 
 const fakeRpcProgram = `
 const fs = require("node:fs");
-fs.writeFileSync(process.env.PI_LOOPS_TEST_ARGV, JSON.stringify({ argv: process.argv, marker: process.env.PI_LOOPS_CHILD, deadline: process.env.PI_LOOPS_CHILD_DEADLINE_MS }));
+fs.writeFileSync(process.env.PI_LOOPS_TEST_ARGV, JSON.stringify({ argv: process.argv, marker: process.env.PI_LOOPS_CHILD, deadline: process.env.PI_LOOPS_CHILD_DEADLINE_MS, pid: process.pid }));
 let buffer = "";
 let waitingUi = false;
 const send = value => console.log(JSON.stringify(value));
@@ -80,6 +80,10 @@ async function harness() {
   return { manager, root, cwd, sessions, argvFile, sessionFile, restore };
 }
 
+function expectProcessGone(pid: number): void {
+  expect(() => process.kill(pid, 0)).toThrow();
+}
+
 describe("RPC worker manager", () => {
   it("launches with bounded metadata and keeps prompts out of argv", async () => {
     const { manager, cwd, sessions, argvFile, restore } = await harness();
@@ -120,6 +124,8 @@ describe("RPC worker manager", () => {
         sessionDirectory: relativeHarness.sessions,
         absoluteDeadlineMs: Date.now() + 60_000,
       }, hostUi())).rejects.toThrow("non-absolute session file");
+      const launched = JSON.parse(await readFile(relativeHarness.argvFile, "utf8")) as { pid: number };
+      expectProcessGone(launched.pid);
     } finally {
       relativeHarness.restore();
     }
@@ -136,6 +142,8 @@ describe("RPC worker manager", () => {
         sessionDirectory: symlinkHarness.sessions,
         absoluteDeadlineMs: Date.now() + 60_000,
       }, hostUi())).rejects.toThrow("escapes its managed session directory");
+      const launched = JSON.parse(await readFile(symlinkHarness.argvFile, "utf8")) as { pid: number };
+      expectProcessGone(launched.pid);
     } finally {
       symlinkHarness.restore();
     }

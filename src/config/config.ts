@@ -1,4 +1,5 @@
 import type { RunBudget } from "../shared/types.js";
+import { isRecord } from "../shared/validation.js";
 
 export interface PiLoopsConfig {
   readonly schemaVersion: 1;
@@ -39,10 +40,6 @@ export const DEFAULT_CONFIG: PiLoopsConfig = Object.freeze({
     model: "current",
   }),
 });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function requireRecord(source: string, path: string, value: unknown): Record<string, unknown> {
   if (!isRecord(value)) throw new Error(`${source}: ${path} must be an object`);

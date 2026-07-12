@@ -172,6 +172,7 @@ export class GitWorktreeManager {
   }
 
   async commitReview(worktree: ManagedWorktree, commitMessage: string, signal?: AbortSignal): Promise<FinalizedReviewBranch> {
+    await this.#requireExpectedBranch(worktree, signal);
     const status = await runGit(["status", "--porcelain=v1", "--untracked-files=normal"], worktree.path, signal);
     if (!status) throw new WorktreeNeedsUserError("Scheduled run produced no reviewable changes");
     await runGit(["add", "--all"], worktree.path, signal);
@@ -191,10 +192,14 @@ export class GitWorktreeManager {
   }
 
   async removeClean(worktree: ManagedWorktree, signal?: AbortSignal): Promise<void> {
-    const currentBranch = await runGit(["branch", "--show-current"], worktree.path, signal);
-    if (currentBranch !== worktree.branch) throw new WorktreeNeedsUserError("Managed worktree branch identity changed");
+    await this.#requireExpectedBranch(worktree, signal);
     const status = await runGit(["status", "--porcelain=v1", "--untracked-files=normal"], worktree.path, signal);
     if (status) throw new WorktreeNeedsUserError("Managed worktree is dirty and will not be removed");
     await runGit(["worktree", "remove", worktree.path], worktree.repositoryRoot, signal);
+  }
+
+  async #requireExpectedBranch(worktree: ManagedWorktree, signal?: AbortSignal): Promise<void> {
+    const currentBranch = await runGit(["branch", "--show-current"], worktree.path, signal);
+    if (currentBranch !== worktree.branch) throw new WorktreeNeedsUserError("Managed worktree branch identity changed");
   }
 }

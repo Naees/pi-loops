@@ -3,6 +3,7 @@ import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding } from "../contracts/project-binding.js";
 import { CycleEvidenceCollector, requiredEvidencePassed } from "../evidence/collector.js";
 import type { CompletionEvaluator, EvaluationDecision } from "../evidence/evaluator.js";
+import { recordRpcToolEvidence } from "../evidence/rpc-collector.js";
 import { isRunId } from "../shared/ids.js";
 import type { RunRecord, RunState, ScheduleRecord } from "../shared/types.js";
 import { acquireWriterLease, LeaseUnavailableError, releaseWriterLease, type WriterLease } from "../storage/lease.js";
@@ -20,7 +21,7 @@ import {
 } from "../worker/git-worktree.js";
 import { RpcWorkerManager, WorkerInteractionRequiredError, type WorkerCycleResult, type WorkerLaunchSpec } from "../worker/rpc-worker-manager.js";
 import { EMPTY_BUDGET_LEDGER, currentActiveMs, exhaustionReason, incrementCycle, pauseActiveTime, startActiveTime, type BudgetLedger } from "./budgets.js";
-import { boundedRecordText, buildWorkMessage, deterministicFailureDecision } from "./attended-goal-support.js";
+import { abortableDelay, boundedRecordText, buildWorkMessage, deterministicFailureDecision } from "./attended-goal-support.js";
 import { EMPTY_PROGRESS_TRACKER, createFailureSignature, isStalled, recordFailure, type ProgressTracker } from "./no-progress.js";
 import { canTransition, transitionRun } from "./state-machine.js";
 import type { ScheduleOccurrenceResult } from "../scheduler/scheduler.js";
@@ -190,7 +191,7 @@ export class UnattendedRunController {
       while (!signal.aborted) {
         const collector = new CycleEvidenceCollector();
         const cycleResult = await runningWorker.runCycle(buildWorkMessage(run as RunRecord, contract, feedback), signal);
-        for (const event of cycleResult.events) this.#recordWorkerEvidence(collector, event);
+        for (const event of cycleResult.events) recordRpcToolEvidence(collector, event);
         ledger = incrementCycle(ledger);
         run = {
           ...(run as RunRecord),
@@ -326,13 +327,7 @@ export class UnattendedRunController {
         return await acquireWriterLease(writerLeasePath(this.#dataRoot, projectId), WRITER_LEASE_STALE_MS, this.#now());
       } catch (error) {
         if (!(error instanceof LeaseUnavailableError)) throw error;
-        await new Promise<void>((resolveDelay, rejectDelay) => {
-          const timer = setTimeout(resolveDelay, WRITER_RETRY_MS);
-          signal.addEventListener("abort", () => {
-            clearTimeout(timer);
-            rejectDelay(new DOMException("Writer wait aborted", "AbortError"));
-          }, { once: true });
-        });
+        await abortableDelay(WRITER_RETRY_MS, signal, "Writer wait aborted");
       }
     }
     throw new DOMException("Writer wait aborted", "AbortError");
@@ -352,18 +347,4 @@ export class UnattendedRunController {
     return terminal;
   }
 
-  #recordWorkerEvidence(collector: CycleEvidenceCollector, event: Record<string, unknown>): void {
-    if (event.type !== "tool_execution_end" || event.toolName !== "bash" || typeof event.toolCallId !== "string") return;
-    const args = typeof event.args === "object" && event.args !== null ? event.args as Record<string, unknown> : {};
-    const result = typeof event.result === "object" && event.result !== null ? event.result as Record<string, unknown> : {};
-    const content = Array.isArray(result.content) ? result.content.filter((item): item is { type: string; text?: string } =>
-      typeof item === "object" && item !== null && typeof (item as Record<string, unknown>).type === "string") : [];
-    collector.recordToolResult({
-      toolCallId: event.toolCallId,
-      toolName: "bash",
-      input: args,
-      content: content.map((item) => item.type === "text" && typeof item.text === "string" ? { type: "text", text: item.text } : { type: item.type }),
-      isError: event.isError === true,
-    });
-  }
 }

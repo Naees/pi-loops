@@ -1,3 +1,5 @@
+import { isRecord } from "../shared/validation.js";
+
 const MAX_UI_TEXT_BYTES = 16 * 1024;
 const MAX_UI_OPTIONS = 100;
 
@@ -13,10 +15,6 @@ export interface ParentWorkerUi {
 export type WorkerUiRelayResult =
   | { readonly handled: true; readonly response?: Record<string, unknown> }
   | { readonly handled: false; readonly reason: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function boundedString(value: unknown, required = true): string | undefined {
   if (value === undefined && !required) return undefined;

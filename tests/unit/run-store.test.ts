@@ -43,18 +43,20 @@ function run(index: number, state: RunState = "configuring"): RunRecord {
   const move = (to: RunState): void => {
     record = transitionRun(record, to, `move to ${to}`, new Date(Date.parse(record.updatedAt) + 1));
   };
+  const paths: Partial<Record<RunState, RunState[]>> = {
+    preflight: ["preflight"],
+    queued: ["preflight", "queued"],
+    starting: ["preflight", "starting"],
+    running: ["preflight", "starting", "running"],
+    verifying: ["preflight", "starting", "running", "verifying"],
+    evaluating: ["preflight", "starting", "running", "verifying", "evaluating"],
+    finalizing: ["preflight", "starting", "running", "verifying", "evaluating", "finalizing"],
+    completed: ["preflight", "starting", "running", "verifying", "evaluating", "finalizing", "completed"],
+  };
   if (state !== "configuring") {
-    move("preflight");
-    move("starting");
-    move("running");
-  }
-  if (state === "completed") {
-    move("verifying");
-    move("evaluating");
-    move("finalizing");
-    move("completed");
-  } else if (state !== "configuring" && state !== "running") {
-    throw new Error(`Unsupported test state: ${state}`);
+    const path = paths[state];
+    if (!path) throw new Error(`Unsupported test state: ${state}`);
+    for (const next of path) move(next);
   }
   return record;
 }
@@ -78,14 +80,17 @@ describe("run store", () => {
     expect(await runs.load("run_00000001")).toBeUndefined();
   });
 
-  it("reconciles active crash states to interrupted", async () => {
+  it("reconciles every persisted transient crash state and is idempotent", async () => {
     const runs = await store();
-    await runs.save(run(1, "running"));
-    await runs.save(run(2, "completed"));
+    const transientStates: RunState[] = ["configuring", "preflight", "queued", "starting", "running", "verifying", "evaluating", "finalizing"];
+    for (const [index, state] of transientStates.entries()) await runs.save(run(index + 1, state));
+    await runs.save(run(20, "completed"));
 
-    expect(await runs.reconcileInterrupted(new Date("2026-07-12T00:00:00.000Z"))).toEqual(["run_00000001"]);
-    expect((await runs.load("run_00000001"))?.state).toBe("interrupted");
-    expect((await runs.load("run_00000002"))?.state).toBe("completed");
+    const expected = transientStates.map((_state, index) => `run_${(index + 1).toString(16).padStart(8, "0")}`);
+    expect(await runs.reconcileInterrupted(new Date("2026-07-12T00:00:00.000Z"))).toEqual(expected);
+    for (const runId of expected) expect((await runs.load(runId))?.state).toBe("interrupted");
+    expect((await runs.load("run_00000014"))?.state).toBe("completed");
+    expect(await runs.reconcileInterrupted(new Date("2026-07-12T00:01:00.000Z"))).toEqual([]);
   });
 
   it.each([
@@ -123,13 +128,20 @@ describe("run store", () => {
     await expect(runs.save({ ...scheduled, worker: incompleteWorker })).rejects.toThrow("invalid shape");
   });
 
-  it("evicts complete eligible records with no tombstone", async () => {
+  it("evicts the least-recently accessed eligible records with no tombstone", async () => {
     const runs = await store();
-    for (let index = 1; index <= 4; index += 1) await runs.save(run(index, "completed"));
+    for (let index = 1; index <= 4; index += 1) {
+      await runs.save(run(index, "completed"));
+      await runs.markAccessed(`run_${index.toString(16).padStart(8, "0")}`, new Date(index * 10_000));
+    }
+    await runs.markAccessed("run_00000001", new Date(50_000));
 
-    const evicted = await runs.enforceRetention(2, (item) => item.state === "completed");
-    expect(evicted).toHaveLength(2);
-    expect(await runs.list()).toHaveLength(2);
-    for (const runId of evicted) expect(await runs.load(runId)).toBeUndefined();
+    expect(await runs.enforceRetention(2, (item) => item.state === "completed")).toEqual([
+      "run_00000002",
+      "run_00000003",
+    ]);
+    expect((await runs.list()).map((item) => item.runId)).toEqual(["run_00000001", "run_00000004"]);
+    expect(await runs.load("run_00000002")).toBeUndefined();
+    expect(await runs.load("run_00000003")).toBeUndefined();
   });
 });

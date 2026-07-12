@@ -7,8 +7,8 @@ import { truncateUtf8 } from "../shared/text.js";
 import type { RunBudget, RunRecord } from "../shared/types.js";
 import type { RunStore } from "../storage/run-store.js";
 
-export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.reject(new DOMException("Operation aborted", "AbortError"));
+export function abortableDelay(ms: number, signal: AbortSignal, abortMessage = "Operation aborted"): Promise<void> {
+  if (signal.aborted) return Promise.reject(new DOMException(abortMessage, "AbortError"));
   return new Promise((resolveDelay, rejectDelay) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
@@ -17,7 +17,7 @@ export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
     const onAbort = (): void => {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
-      rejectDelay(new DOMException("Operation aborted", "AbortError"));
+      rejectDelay(new DOMException(abortMessage, "AbortError"));
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });

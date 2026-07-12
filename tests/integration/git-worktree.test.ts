@@ -65,6 +65,21 @@ describe("Git worktree manager", () => {
     await expect(manager.create("run_1234abcd", identity, managedRoot)).rejects.toBeInstanceOf(ManagedWorktreeConflictError);
   });
 
+  it("refuses to commit after the managed worktree changes branches", async () => {
+    const { repositoryRoot, managedRoot } = await repository();
+    const manager = new GitWorktreeManager();
+    const worktree = await manager.create("run_1234abcd", await manager.inspectRepository(repositoryRoot), managedRoot);
+    git(worktree.path, ["checkout", "-qb", "unexpected-branch"]);
+    await writeFile(join(worktree.path, "result.txt"), "must not be committed\n");
+    const headBefore = git(worktree.path, ["rev-parse", "HEAD"]);
+
+    await expect(manager.commitReview(worktree, "scheduled result")).rejects.toThrow("branch identity changed");
+
+    expect(git(worktree.path, ["rev-parse", "HEAD"])).toBe(headBefore);
+    expect(git(worktree.path, ["status", "--porcelain"])).toContain("result.txt");
+    expect(() => git(repositoryRoot, ["show", `${worktree.branch}:result.txt`])).toThrow();
+  });
+
   it("never removes dirty unresolved worktrees", async () => {
     const { repositoryRoot, managedRoot } = await repository();
     const manager = new GitWorktreeManager();

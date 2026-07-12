@@ -179,10 +179,10 @@ describe("attended goal controller", () => {
   it("enforces the active wall-time budget even before a cycle settles", async () => {
     const { controller, host, entries } = await harness();
     await controller.start({ goal: "long-running work", budget: { maxActiveMs: 1 } }, host);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    expect(host.abortAgent).toHaveBeenCalled();
-    expect(controller.activeRunId).toBeUndefined();
+    await vi.waitFor(() => {
+      expect(host.abortAgent).toHaveBeenCalled();
+      expect(controller.activeRunId).toBeUndefined();
+    });
     expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "budget_exhausted" }));
   });
 
@@ -215,6 +215,36 @@ describe("attended goal controller", () => {
     expect(controller.activeRunId).toBeUndefined();
     expect(host.abortAgent).toHaveBeenCalledOnce();
     expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+  });
+
+  it("lets cancellation win over a late successful evaluator response", async () => {
+    const { controller, host, entries, messages } = await harness();
+    let resolveEvaluation: ((decision: EvaluationDecision) => void) | undefined;
+    let evaluationSignal: AbortSignal | undefined;
+    const evaluator: CompletionEvaluator = {
+      evaluate: vi.fn((_input, signal) => {
+        evaluationSignal = signal;
+        return new Promise<EvaluationDecision>((resolve) => {
+          resolveEvaluation = resolve;
+        });
+      }),
+    };
+    const started = await controller.start({ goal: "finish", verifierCommands: ["npm test"] }, host);
+    recordVerifier(controller, true);
+    const settling = controller.settle("finished", evaluator, host);
+    await vi.waitFor(() => expect(evaluator.evaluate).toHaveBeenCalledOnce());
+
+    const stopping = controller.stop(started.runId, host);
+    expect(evaluationSignal?.aborted).toBe(true);
+    resolveEvaluation?.(accepted);
+    await Promise.all([settling, stopping]);
+
+    expect(controller.activeRunId).toBeUndefined();
+    expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "cancelled" }));
+    expect(entries.some((entry) => entry.state === "completed")).toBe(false);
+    expect(messages).toHaveLength(1);
+    const replacement = await controller.start({ goal: "replacement" }, host);
+    await controller.stop(replacement.runId, host);
   });
 
   it("discards active state when startup host callbacks fail", async () => {

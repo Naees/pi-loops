@@ -1,13 +1,13 @@
 import { readdir, readFile, rm, stat, utimes } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { canTransition, transitionRun } from "../controller/state-machine.js";
-import { isRunId, isScheduleId } from "../shared/ids.js";
+import { isProjectId, isRunId, isScheduleId } from "../shared/ids.js";
 import { RUN_MODES, RUN_STATES, type RunRecord, type RunState } from "../shared/types.js";
+import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget, isStringArray } from "../shared/validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 import { selectRetentionEvictions } from "./retention.js";
 
-const PROJECT_ID_PATTERN = /^project_[0-9a-f]{16}$/;
 const MAX_RUN_RECORD_BYTES = 2 * 1024 * 1024;
 const ACTIVE_CRASH_STATES = new Set<RunState>([
   "configuring",
@@ -20,19 +20,6 @@ const ACTIVE_CRASH_STATES = new Set<RunState>([
   "finalizing",
 ]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) > 0;
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const keys = new Set(allowed);
-  return Object.keys(value).every((key) => keys.has(key));
-}
-
 function isTransition(value: unknown): boolean {
   if (!isRecord(value) || !hasOnlyKeys(value, ["from", "to", "at", "reason"])) return false;
   return (
@@ -44,10 +31,6 @@ function isTransition(value: unknown): boolean {
     typeof value.reason === "string" &&
     value.reason.trim().length > 0
   );
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 function isStoredEvidence(value: unknown): boolean {
@@ -111,21 +94,11 @@ function isStoredWorker(value: unknown, runId: string): boolean {
   );
 }
 
-function isBudget(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, ["maxActiveMs", "maxCycles", "stallThreshold"]) &&
-    isPositiveSafeInteger(value.maxActiveMs) &&
-    isPositiveSafeInteger(value.maxCycles) &&
-    isPositiveSafeInteger(value.stallThreshold)
-  );
-}
-
 function isBudgetHistoryEntry(value: unknown): boolean {
   if (!isRecord(value) || !hasOnlyKeys(value, ["epoch", "budget", "cycles", "activeMs", "endedAt", "reason"])) return false;
   return (
     isPositiveSafeInteger(value.epoch) &&
-    isBudget(value.budget) &&
+    isRunBudget(value.budget) &&
     Number.isSafeInteger(value.cycles) &&
     (value.cycles as number) >= 0 &&
     Number.isSafeInteger(value.activeMs) &&
@@ -186,7 +159,7 @@ function parseRunRecord(value: unknown): RunRecord {
     typeof value.runId !== "string" ||
     !isRunId(value.runId) ||
     typeof value.projectId !== "string" ||
-    !PROJECT_ID_PATTERN.test(value.projectId) ||
+    !isProjectId(value.projectId) ||
     (value.scheduleId !== undefined && (typeof value.scheduleId !== "string" || !isScheduleId(value.scheduleId))) ||
     typeof value.mode !== "string" ||
     !RUN_MODES.includes(value.mode as (typeof RUN_MODES)[number]) ||
@@ -201,7 +174,7 @@ function parseRunRecord(value: unknown): RunRecord {
     (value.verifierCommands !== undefined &&
       (!isStringArray(value.verifierCommands) || value.verifierCommands.length > 20 ||
         value.verifierCommands.some((item) => Buffer.byteLength(item, "utf8") > 4 * 1024))) ||
-    !isBudget(value.budget) ||
+    !isRunBudget(value.budget) ||
     (value.budgetEpoch !== undefined && !isPositiveSafeInteger(value.budgetEpoch)) ||
     (value.budgetHistory !== undefined &&
       (!Array.isArray(value.budgetHistory) || value.budgetHistory.length > 1_000 || !value.budgetHistory.every(isBudgetHistoryEntry))) ||
@@ -242,7 +215,7 @@ function runFileName(runId: string): string {
 }
 
 export function writerLeasePath(dataRoot: string, projectId: string): string {
-  if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
+  if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
   return join(dataRoot, "projects", projectId, "writer.lease.json");
 }
 
@@ -253,7 +226,7 @@ export class RunStore {
   readonly #lease: WriterLease | undefined;
 
   constructor(dataRoot: string, projectId: string, lease?: WriterLease) {
-    if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
+    if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
     this.#projectId = projectId;
     this.#runsDirectory = join(dataRoot, "projects", projectId, "runs");
     this.#expectedLeasePath = writerLeasePath(dataRoot, projectId);

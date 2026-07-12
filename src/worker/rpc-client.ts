@@ -40,7 +40,8 @@ function positive(value: number | undefined, fallback: number, name: string): nu
 }
 
 function isEnvelope(value: unknown): value is RpcEnvelope {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as Record<string, unknown>).type === "string";
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).type === "string" && (value as Record<string, unknown>).type !== "";
 }
 
 export class RpcWorkerClient {
@@ -258,7 +259,11 @@ export class RpcWorkerClient {
     this.#eventBytes += bytes;
     this.events.push(value);
 
-    if (value.type === "response" && typeof value.id === "string") {
+    if (value.type === "response") {
+      if (typeof value.id !== "string" || value.id.length === 0 || typeof value.command !== "string" || typeof value.success !== "boolean") {
+        this.#fail(new Error("RPC worker emitted an invalid response envelope"));
+        return;
+      }
       const pending = this.#pending.get(value.id);
       if (pending) {
         if (value.command !== pending.command) {

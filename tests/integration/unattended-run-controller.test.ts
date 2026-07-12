@@ -6,8 +6,9 @@ import { UnattendedRunController, type UnattendedRunHost } from "../../src/contr
 import type { CompletionEvaluator } from "../../src/evidence/evaluator.js";
 import { createProjectId } from "../../src/shared/ids.js";
 import type { RunRecord, ScheduleRecord } from "../../src/shared/types.js";
-import { RunStore } from "../../src/storage/run-store.js";
-import { DirtyRepositoryError } from "../../src/worker/git-worktree.js";
+import { acquireWriterLease, releaseWriterLease } from "../../src/storage/lease.js";
+import { RunStore, writerLeasePath } from "../../src/storage/run-store.js";
+import { DirtyRepositoryError, WorktreeNeedsUserError } from "../../src/worker/git-worktree.js";
 import { WorkerInteractionRequiredError } from "../../src/worker/rpc-worker-manager.js";
 
 const temporaryDirectories: string[] = [];
@@ -127,6 +128,44 @@ describe("unattended run controller", () => {
       .resolves.toEqual({ status: "interrupted" });
     expect(rpc.manager.launch).not.toHaveBeenCalled();
     expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "awaiting_user" }));
+  });
+
+  it("persists the review commit and retains the worktree when removal needs user action", async () => {
+    const { dataRoot, projectRoot, projectId, entries, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    git.removeClean.mockRejectedValue(new WorktreeNeedsUserError("worktree changed after commit"));
+    const rpc = workers();
+    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
+      .resolves.toEqual({ status: "interrupted" });
+
+    expect(rpc.worker.stop).toHaveBeenCalledOnce();
+    expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "awaiting_user" }));
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "awaiting_user",
+      worker: expect.objectContaining({ reviewCommit: "b".repeat(40), worktreeRetained: true }),
+    }));
+  });
+
+  it("marks launch failures recoverable, retains the worktree, and releases the writer lease", async () => {
+    const { dataRoot, projectRoot, projectId, entries, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    rpc.manager.launch.mockRejectedValue(new Error("worker launch failed"));
+    const controller = new UnattendedRunController({ dataRoot, worktrees: git, workers: rpc.manager });
+
+    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal))
+      .rejects.toThrow("worker launch failed");
+
+    expect(entries.at(-1)).toEqual(expect.objectContaining({ state: "failed", failureRecoverable: true }));
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "failed",
+      failureRecoverable: true,
+      worker: expect.objectContaining({ worktreeRetained: true }),
+    }));
+    const lease = await acquireWriterLease(writerLeasePath(dataRoot, projectId), 30_000);
+    await releaseWriterLease(lease);
   });
 
   it("fails closed on an unhandled worker interaction", async () => {

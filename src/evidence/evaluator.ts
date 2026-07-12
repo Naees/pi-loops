@@ -1,6 +1,7 @@
 import { complete, type UserMessage } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateUtf8 } from "../shared/text.js";
+import { isStringArray } from "../shared/validation.js";
 
 export interface EvaluationInput {
   readonly goal: string;
@@ -62,10 +63,6 @@ function boundedEvaluationInput(input: EvaluationInput): EvaluationInput {
     })),
     ...(input.previousFeedback === undefined ? {} : { previousFeedback: truncateUtf8(input.previousFeedback, 8 * 1024) }),
   };
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
 export function parseEvaluationDecision(text: string): EvaluationDecision {

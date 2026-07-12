@@ -36,9 +36,14 @@ This boundary remains until the blockers below are resolved and a packed schedul
 
 ## Current validation
 
-- `npm run check`: passed (strict source/script typechecks; 137 tests).
+- `npm run check`: passed (strict source/script typechecks; 166 tests).
+- Five consecutive full-suite reruns: passed without flakes.
+- `npm run test:coverage`: passed (85.34% lines, 74.50% branches); coverage was used to target evaluator, RPC, UI, scheduler, and unattended gaps rather than as a release threshold.
 - `npm run test:packed`: passed; existing `/loops status` behavior restored.
-- `npm run pack:inspect`: passed; 39 intended package files.
+- `npm run pack:inspect`: passed; 42 intended package files.
+- `npm run test:e2e:attended`: passed.
+- `npm run spike:rpc:lifecycle`: passed, including forced-parent-death cleanup 10/10 on macOS/Pi 0.80.6.
+- `npm audit`: passed with zero vulnerabilities.
 - `git diff --check`: passed.
 
 ## Review disposition

@@ -1,34 +1,20 @@
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { DEFAULT_CONFIG } from "../config/config.js";
-import { createProjectId, isRunId, isScheduleId } from "../shared/ids.js";
+import { createProjectId, isProjectId, isRunId, isScheduleId } from "../shared/ids.js";
 import {
   SCHEDULE_STATES,
-  type RunBudget,
   type SchedulePauseReason,
   type ScheduleRecord,
   type ScheduleState,
   type ScheduleTiming,
 } from "../shared/types.js";
+import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget } from "../shared/validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 
-const PROJECT_ID_PATTERN = /^project_[0-9a-f]{16}$/;
 const MAX_SCHEDULE_RECORD_BYTES = 1024 * 1024;
 const PAUSE_REASONS: readonly SchedulePauseReason[] = ["completed", "missed", "interrupted", "user"];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const keys = new Set(allowed);
-  return Object.keys(value).every((key) => keys.has(key));
-}
-
-function isPositiveSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) > 0;
-}
 
 function isIsoDate(value: unknown): value is string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return false;
@@ -38,11 +24,6 @@ function isIsoDate(value: unknown): value is string {
 function isStringArray(value: unknown, maximumItems: number, maximumItemBytes: number): value is string[] {
   return Array.isArray(value) && value.length <= maximumItems && value.every((item) =>
     typeof item === "string" && item.trim().length > 0 && Buffer.byteLength(item, "utf8") <= maximumItemBytes);
-}
-
-function isBudget(value: unknown): value is RunBudget {
-  return isRecord(value) && hasOnlyKeys(value, ["maxActiveMs", "maxCycles", "stallThreshold"]) &&
-    isPositiveSafeInteger(value.maxActiveMs) && isPositiveSafeInteger(value.maxCycles) && isPositiveSafeInteger(value.stallThreshold);
 }
 
 function parseTiming(value: unknown): ScheduleTiming | undefined {
@@ -107,13 +88,13 @@ export function parseScheduleRecord(value: unknown): ScheduleRecord {
   if (
     value.schemaVersion !== 1 ||
     typeof value.scheduleId !== "string" || !isScheduleId(value.scheduleId) ||
-    typeof value.projectId !== "string" || !PROJECT_ID_PATTERN.test(value.projectId) ||
+    typeof value.projectId !== "string" || !isProjectId(value.projectId) ||
     typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || createProjectId(value.projectRoot) !== value.projectId ||
     typeof value.state !== "string" || !SCHEDULE_STATES.includes(value.state as ScheduleState) ||
     typeof value.goal !== "string" || value.goal.trim().length === 0 || Buffer.byteLength(value.goal, "utf8") > 16 * 1024 ||
     !isStringArray(value.constraints, 50, 4 * 1024) ||
     !isStringArray(value.verifierCommands, 20, 4 * 1024) ||
-    !isBudget(value.budget) ||
+    !isRunBudget(value.budget) ||
     typeof value.expression !== "string" || value.expression.trim().length === 0 || Buffer.byteLength(value.expression, "utf8") > 4 * 1024 ||
     typeof value.normalizedExpression !== "string" || value.normalizedExpression.trim().length === 0 || Buffer.byteLength(value.normalizedExpression, "utf8") > 8 * 1024 ||
     timing === undefined ||
@@ -137,7 +118,7 @@ function scheduleFileName(scheduleId: string): string {
 }
 
 export function scheduleLeasePath(dataRoot: string, projectId: string): string {
-  if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
+  if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
   return join(dataRoot, "projects", projectId, "schedule-store.lease.json");
 }
 
@@ -148,7 +129,7 @@ export class ScheduleStore {
   readonly #lease: WriterLease | undefined;
 
   constructor(dataRoot: string, projectId: string, lease?: WriterLease) {
-    if (!PROJECT_ID_PATTERN.test(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
+    if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
     this.#projectId = projectId;
     this.#directory = join(dataRoot, "projects", projectId, "schedules");
     this.#expectedLeasePath = scheduleLeasePath(dataRoot, projectId);

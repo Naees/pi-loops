@@ -43,6 +43,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:scripts": "tsc --project tsconfig.scripts.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run typecheck:scripts && npm test",
     "pack:inspect": "node scripts/inspect-pack.mjs",
@@ -64,6 +65,7 @@
     "@earendil-works/pi-coding-agent": "0.80.6",
     "@types/node": "24.12.4",
     "@types/proper-lockfile": "4.1.4",
+    "@vitest/coverage-v8": "^4.1.9",
     "typebox": "1.1.38",
     "typescript": "5.9.3",
     "vitest": "4.1.9"
