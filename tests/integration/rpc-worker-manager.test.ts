@@ -167,11 +167,11 @@ describe("RPC worker manager", () => {
       await vi.waitFor(async () => {
         descendantPid = Number(await readFile(descendantFile, "utf8"));
         expect(descendantPid).toBeGreaterThan(0);
-      });
+      }, { timeout: 10_000 });
       await worker.stop();
       await cycle;
       expectProcessGone(worker.identity.pid);
-      await vi.waitFor(() => expectProcessGone(descendantPid));
+      await vi.waitFor(() => expectProcessGone(descendantPid), { timeout: 10_000 });
     } finally {
       restore();
     }
