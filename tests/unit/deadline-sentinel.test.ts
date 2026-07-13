@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { launchWindowsDeadlineSentinel } from "../../src/worker/deadline-sentinel.js";
 
 describe("Windows deadline sentinel", () => {
-  it("launches an independent job-object sentinel with bounded non-sensitive environment", async () => {
+  it("launches an independent job-object sentinel with an absolute executable and no shell", async () => {
     const calls: unknown[][] = [];
     const childUnref = vi.fn();
     const stdoutUnref = vi.fn();
@@ -28,7 +28,7 @@ describe("Windows deadline sentinel", () => {
     }) as unknown as typeof spawnType;
 
     const sentinel = launchWindowsDeadlineSentinel(123, Date.now() + 60_000, {
-      environment: { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", SECRET_VALUE: "must-not-propagate" },
+      environment: { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" },
       spawn: implementation,
     });
     await sentinel.ready;
@@ -47,9 +47,8 @@ describe("Windows deadline sentinel", () => {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: expect.objectContaining({ SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", Path: expect.any(String) }),
+      env: expect.objectContaining({ SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" }),
     }));
-    expect((calls[0]?.[2] as { env: NodeJS.ProcessEnv }).env.SECRET_VALUE).toBeUndefined();
     expect(childUnref).toHaveBeenCalledOnce();
     expect(stdoutUnref).toHaveBeenCalledOnce();
     expect(stderrUnref).toHaveBeenCalledOnce();

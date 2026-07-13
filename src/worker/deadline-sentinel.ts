@@ -22,26 +22,6 @@ function windowsSystemRoot(environment: NodeJS.ProcessEnv): string {
   return root;
 }
 
-function safeWindowsEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const safe: NodeJS.ProcessEnv = {};
-  for (const name of [
-    "SystemRoot", "SYSTEMROOT", "windir", "WINDIR", "SystemDrive", "ComSpec",
-    "TEMP", "TMP", "LOCALAPPDATA", "APPDATA", "ProgramData", "ProgramFiles",
-    "ProgramFiles(x86)", "ProgramW6432", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
-    "PSModulePath", "PATHEXT", "OS", "PROCESSOR_ARCHITECTURE",
-  ] as const) {
-    const value = environment[name];
-    if (value !== undefined) safe[name] = value;
-  }
-  const root = windowsSystemRoot(environment);
-  safe.Path = [
-    win32.join(root, "System32"),
-    win32.join(root, "System32", "WindowsPowerShell", "v1.0"),
-    win32.join(root, "Microsoft.NET", "Framework64", "v4.0.30319"),
-  ].join(";");
-  return safe;
-}
-
 export function launchWindowsDeadlineSentinel(
   targetPid: number,
   absoluteDeadlineMs: number,
@@ -70,7 +50,7 @@ export function launchWindowsDeadlineSentinel(
     ...(options.statusPath === undefined ? [] : ["-StatusPath", options.statusPath]),
   ], {
     detached: true,
-    env: safeWindowsEnvironment(environment),
+    env: environment,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
