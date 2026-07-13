@@ -1,5 +1,6 @@
 import type { CompletionContract } from "../contracts/completion-contract.js";
 import { truncateUtf8 } from "../shared/text.js";
+import type { StoredVerifierEvidence } from "../shared/types.js";
 
 export interface ObservedToolResult {
   readonly toolCallId: string;
@@ -9,15 +10,7 @@ export interface ObservedToolResult {
   readonly isError: boolean;
 }
 
-export interface VerifierEvidence {
-  readonly verifierId: string;
-  readonly criterion: string;
-  readonly command: string;
-  readonly observed: boolean;
-  readonly passed: boolean;
-  readonly summary: string;
-  readonly toolCallId?: string;
-}
+export interface VerifierEvidence extends StoredVerifierEvidence {}
 
 export interface CycleEvidenceCollectorOptions {
   readonly maxToolResults?: number;

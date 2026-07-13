@@ -1,5 +1,7 @@
 import { open, readdir } from "node:fs/promises";
+import { writeJsonAtomic } from "./atomic-file.js";
 import { readBoundedFile } from "./bounded-file-reader.js";
+import { prepareStoredState, type StoredStateKind } from "./state-migrations.js";
 
 export async function readBoundedJsonFile(
   path: string,
@@ -17,6 +19,33 @@ export async function readBoundedJsonFile(
   } finally {
     await handle?.close();
   }
+}
+
+export interface StoredJsonRecord<T> {
+  readonly record: T;
+  readonly migrated: boolean;
+}
+
+export async function readStoredJsonRecord<T>(
+  path: string,
+  kind: StoredStateKind,
+  maxBytes: number,
+  oversizedMessage: string,
+  parse: (value: unknown) => T,
+): Promise<StoredJsonRecord<T> | undefined> {
+  const value = await readBoundedJsonFile(path, maxBytes, oversizedMessage);
+  if (value === undefined) return undefined;
+  const prepared = prepareStoredState(kind, value);
+  return { record: parse(prepared.value), migrated: prepared.migrated };
+}
+
+export async function writeStoredJsonRecord(
+  path: string,
+  record: unknown,
+  maxBytes: number,
+  oversizedMessage: string,
+): Promise<void> {
+  await writeJsonAtomic(path, record, { maxBytes, oversizedMessage });
 }
 
 export async function listRecordIds(directory: string, capturingFilePattern: RegExp): Promise<string[]> {

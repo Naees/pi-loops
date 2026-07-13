@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { readBoundedFile, type BoundedReadableFile } from "../../src/storage/bounded-file-reader.js";
 
 describe("bounded file reader", () => {
+  it("rejects invalid byte ceilings before reading", async () => {
+    const handle: BoundedReadableFile = { stat: vi.fn(), read: vi.fn() };
+    for (const maxBytes of [-1, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(readBoundedFile(handle, maxBytes, "too large")).rejects.toThrow("non-negative safe integer");
+    }
+    expect(handle.stat).not.toHaveBeenCalled();
+    expect(handle.read).not.toHaveBeenCalled();
+  });
+
   it("rejects growth beyond the ceiling even when stat reports a smaller file", async () => {
     const contents = Buffer.from("12345", "utf8");
     let cursor = 0;

@@ -255,6 +255,39 @@ describe("RPC worker manager", () => {
     }
   });
 
+  it("rejects non-object response data after a settled worker cycle", async () => {
+    const program = `
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  buffer += chunk;
+  let newline;
+  while ((newline = buffer.indexOf("\\n")) !== -1) {
+    const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); if (!line) continue;
+    const command = JSON.parse(line);
+    const response = { type: "response", id: command.id, command: command.type, success: true };
+    if (command.type === "get_state") response.data = { isStreaming: false, sessionId: "session-1", sessionFile: process.env.PI_LOOPS_TEST_SESSION };
+    if (command.type === "get_last_assistant_text") response.data = [];
+    console.log(JSON.stringify(response));
+    if (command.type === "prompt") console.log(JSON.stringify({ type: "agent_settled" }));
+  }
+});
+`;
+    const malformed = await harness({ program });
+    try {
+      const worker = await malformed.manager.launch({
+        runId: "run_1234abcd",
+        cwd: malformed.cwd,
+        sessionDirectory: malformed.sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+      }, hostUi());
+      await expect(worker.runCycle("work")).rejects.toThrow("invalid response data");
+      await worker.stop();
+    } finally {
+      malformed.restore();
+    }
+  });
+
   it("fails malformed handshakes closed and reaps every spawned worker", async () => {
     for (const [data, message] of [
       ['{ isStreaming: true, sessionId: "session-1", sessionFile: process.env.PI_LOOPS_TEST_SESSION }', "handshake is invalid"],

@@ -26,4 +26,14 @@ describe("run retention", () => {
       ),
     ).toEqual([]);
   });
+
+  it("rejects invalid limits and breaks equal recency ties by run ID", () => {
+    for (const limit of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => selectRetentionEvictions([], limit)).toThrow("positive safe integer");
+    }
+    expect(selectRetentionEvictions([
+      { runId: "run_b", lastUsedMs: 1, eligible: true },
+      { runId: "run_a", lastUsedMs: 1, eligible: true },
+    ], 1)).toEqual(["run_a"]);
+  });
 });

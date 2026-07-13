@@ -122,7 +122,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     }
     const binding = await resolveProjectBinding(ctx.cwd);
     const candidates = (await new RunStore(dataRoot, binding.projectId).list())
-      .filter((run) => (run.mode === "goal" || run.mode === "scheduled" || run.mode === "proactive") && isResumableRun(run))
+      .filter(isResumableRun)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
     if (candidates.length > 1) throw new Error("Specify a run ID to resume");
     return candidates[0]?.mode === "goal" ? undefined : candidates[0];
@@ -157,6 +157,28 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     } catch (error) {
       ctx.ui.notify(`Could not persist the Pi Loops recommendation dismissal: ${errorMessage(error)}`, "warning");
     }
+  };
+
+  const deleteRuntimeData = async (id: string, ctx: ExtensionContext, goalHost: GoalLoopHost): Promise<void> => {
+    if (id.startsWith("schedule_")) {
+      await scheduler.delete(id, ctx.cwd);
+      return;
+    }
+    if (id.startsWith("trigger_")) {
+      await triggers.delete(id, ctx.cwd);
+      return;
+    }
+
+    const run = await storedRun(ctx, id);
+    if (run?.mode === "scheduled" && run.scheduleId) {
+      const schedule = (await scheduler.list(ctx.cwd)).find((item) => item.scheduleId === run.scheduleId);
+      if (schedule?.activeRunId === run.runId) throw new Error(`Stop the active scheduled run before deleting it: ${run.runId}`);
+    }
+    if (run?.mode === "proactive" && run.triggerId) {
+      const trigger = (await triggers.list(ctx.cwd)).find((item) => item.triggerId === run.triggerId);
+      if (trigger?.activeRunId === run.runId) throw new Error(`Stop the active proactive run before deleting it: ${run.runId}`);
+    }
+    await goals.delete(id, goalHost);
   };
 
   const resumeWork = async (request: GoalResumeRequest, ctx: ExtensionContext, goalHost: GoalLoopHost) => {
@@ -225,22 +247,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
               ctx.ui.notify("Run deletion cancelled.", "info");
               break;
             }
-            if (parsed.value.startsWith("schedule_")) {
-              await scheduler.delete(parsed.value, ctx.cwd);
-            } else if (parsed.value.startsWith("trigger_")) {
-              await triggers.delete(parsed.value, ctx.cwd);
-            } else {
-              const run = await storedRun(ctx, parsed.value);
-              if (run?.mode === "scheduled" && run.scheduleId) {
-                const schedule = (await scheduler.list(ctx.cwd)).find((item) => item.scheduleId === run.scheduleId);
-                if (schedule?.activeRunId === run.runId) throw new Error(`Stop the active scheduled run before deleting it: ${run.runId}`);
-              }
-              if (run?.mode === "proactive" && run.triggerId) {
-                const trigger = (await triggers.list(ctx.cwd)).find((item) => item.triggerId === run.triggerId);
-                if (trigger?.activeRunId === run.runId) throw new Error(`Stop the active proactive run before deleting it: ${run.runId}`);
-              }
-              await goals.delete(parsed.value, commandHost);
-            }
+            await deleteRuntimeData(parsed.value, ctx, commandHost);
             ctx.ui.notify(`Deleted Pi Loops runtime data for ${parsed.value}.`, "info");
             break;
           }

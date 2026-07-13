@@ -2,14 +2,13 @@ import { rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { createProjectId, isProjectId, isRunId, isTriggerId } from "../shared/ids.js";
 import { TRIGGER_STATES, type TriggerRecord, type TriggerSource, type TriggerState } from "../shared/types.js";
-import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget } from "../shared/validation.js";
-import { isBoundedNonEmptyStringArray, isCanonicalIsoDate } from "./record-validation.js";
-import { writeJsonAtomic } from "./atomic-file.js";
-import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
+import { hasOnlyKeys, isPositiveSafeInteger, isRecord } from "../shared/validation.js";
+import { hasValidStoredCompletionDefinition, isCanonicalIsoDate } from "./record-validation.js";
+import { listRecordIds, readStoredJsonRecord, writeStoredJsonRecord } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
-import { prepareStoredState } from "./state-migrations.js";
 
 const MAX_TRIGGER_RECORD_BYTES = 1024 * 1024;
+const OVERSIZED_TRIGGER_RECORD = `Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`;
 export const MAX_TRIGGER_DEFINITIONS = 50;
 const MIN_DEBOUNCE_MS = 100;
 const MAX_DEBOUNCE_MS = 60_000;
@@ -63,10 +62,7 @@ export function parseTriggerRecord(value: unknown): TriggerRecord {
     typeof value.projectId !== "string" || !isProjectId(value.projectId) ||
     typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || createProjectId(value.projectRoot) !== value.projectId ||
     typeof value.state !== "string" || !TRIGGER_STATES.includes(value.state as TriggerState) ||
-    typeof value.goal !== "string" || value.goal.trim().length === 0 || Buffer.byteLength(value.goal, "utf8") > 16 * 1024 ||
-    !isBoundedNonEmptyStringArray(value.constraints, 50, 4 * 1024) ||
-    !isBoundedNonEmptyStringArray(value.verifierCommands, 20, 4 * 1024) ||
-    !isRunBudget(value.budget) || source === undefined ||
+    !hasValidStoredCompletionDefinition(value) || source === undefined ||
     (value.activeRunId !== undefined && (typeof value.activeRunId !== "string" || !isRunId(value.activeRunId))) ||
     (value.pendingSince !== undefined && !isCanonicalIsoDate(value.pendingSince)) ||
     (value.lastTriggeredAt !== undefined && !isCanonicalIsoDate(value.lastTriggeredAt)) ||
@@ -111,31 +107,25 @@ export class TriggerStore {
     await this.#assertMutationLease();
     if (trigger.projectId !== this.#projectId) throw new Error("Trigger project ID does not match this store");
     parseTriggerRecord(trigger);
-    if (Buffer.byteLength(JSON.stringify(trigger), "utf8") > MAX_TRIGGER_RECORD_BYTES) {
-      throw new Error(`Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`);
-    }
-    await writeJsonAtomic(this.#path(trigger.triggerId), trigger);
+    await writeStoredJsonRecord(this.#path(trigger.triggerId), trigger, MAX_TRIGGER_RECORD_BYTES, OVERSIZED_TRIGGER_RECORD);
   }
 
   async load(triggerId: string): Promise<TriggerRecord | undefined> {
     const path = this.#path(triggerId);
-    const value = await readBoundedJsonFile(
+    const loaded = await readStoredJsonRecord(
       path,
+      "trigger",
       MAX_TRIGGER_RECORD_BYTES,
-      `Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`,
+      OVERSIZED_TRIGGER_RECORD,
+      parseTriggerRecord,
     );
-    if (value === undefined) return undefined;
-    const prepared = prepareStoredState("trigger", value);
-    const trigger = parseTriggerRecord(prepared.value);
-    if (trigger.projectId !== this.#projectId) throw new Error("Stored trigger belongs to a different project");
-    if (prepared.migrated) {
+    if (loaded === undefined) return undefined;
+    if (loaded.record.projectId !== this.#projectId) throw new Error("Stored trigger belongs to a different project");
+    if (loaded.migrated) {
       await this.#assertMutationLease();
-      if (Buffer.byteLength(JSON.stringify(trigger), "utf8") > MAX_TRIGGER_RECORD_BYTES) {
-        throw new Error(`Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`);
-      }
-      await writeJsonAtomic(path, trigger);
+      await writeStoredJsonRecord(path, loaded.record, MAX_TRIGGER_RECORD_BYTES, OVERSIZED_TRIGGER_RECORD);
     }
-    return trigger;
+    return loaded.record;
   }
 
   async list(): Promise<TriggerRecord[]> {

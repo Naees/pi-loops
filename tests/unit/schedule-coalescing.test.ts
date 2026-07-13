@@ -3,6 +3,7 @@ import { createProjectId } from "../../src/shared/ids.js";
 import type { ScheduleRecord } from "../../src/shared/types.js";
 import {
   completeScheduleOccurrence,
+  interruptScheduleOccurrence,
   reconcileMissedSchedule,
   resumeScheduleOccurrence,
   triggerSchedule,
@@ -92,6 +93,10 @@ describe("schedule coalescing", () => {
     expect(() => completeScheduleOccurrence(running, "run_deadbeef", new Date("2026-07-12T12:06:00.000Z"))).toThrow("not running occurrence");
     const pending = triggerSchedule(running, "run_00000010", new Date("2026-07-12T12:10:00.000Z")).schedule;
     expect(() => completeScheduleOccurrence(pending, "run_1234abcd", new Date("2026-07-12T12:11:00.000Z"))).toThrow("requires a replacement run ID");
+    expect(() => interruptScheduleOccurrence(running, "run_deadbeef", new Date())).toThrow("not running occurrence");
+    expect(() => resumeScheduleOccurrence(recurring({ state: "paused", pauseReason: "interrupted" }), "invalid", new Date()))
+      .toThrow("Invalid run ID");
+    expect(() => triggerSchedule(recurring(), "run_deadbeef", new Date(Number.NaN))).toThrow("clock must be a valid date");
   });
 
   it("restores interrupted occurrences through the schedule domain transition", () => {

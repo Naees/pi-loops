@@ -135,6 +135,16 @@ describe("controller repository writer lock", () => {
     activeLocks.push(second);
   });
 
+  it("rejects relative lock identities and invalid Git timeouts", async () => {
+    expect(() => repositoryWriterLeasePath("relative-root", "/tmp/repository/.git")).toThrow("lock root must be absolute");
+    expect(() => repositoryWriterLeasePath("/tmp/locks", "relative-git-directory")).toThrow("common directory must be absolute");
+    const directory = await mkdtemp(join(tmpdir(), "pi-loops-invalid-timeout-"));
+    temporaryDirectories.push(directory);
+    for (const timeoutMs of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(resolveRepositoryLockIdentity(directory, { timeoutMs })).rejects.toThrow("positive safe integer");
+    }
+  });
+
   it("derives its global namespace independently of PI_CODING_AGENT_DIR", () => {
     const original = process.env.PI_CODING_AGENT_DIR;
     try {

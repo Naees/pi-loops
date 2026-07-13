@@ -176,11 +176,12 @@ export class AttendedGoalController {
       await this.#move(active, "verifying", "Worker cycle settled");
 
       const evidence = active.collector.evidenceFor(active.contract);
+      const evidencePassed = requiredEvidencePassed(evidence);
       active.run = { ...active.run, latestEvidence: evidence };
       await active.store.save(this.#snapshot(active));
 
       let decision: EvaluationDecision;
-      if (!requiredEvidencePassed(evidence)) {
+      if (!evidencePassed) {
         decision = deterministicFailureDecision(evidence);
       } else {
         await this.#move(active, "evaluating", "Required deterministic evidence passed");
@@ -212,7 +213,7 @@ export class AttendedGoalController {
       await active.store.save(this.#snapshot(active));
 
       if (decision.complete) {
-        if (!requiredEvidencePassed(evidence)) {
+        if (!evidencePassed) {
           await this.#fail(active, "Evaluator attempted to override required deterministic evidence", false, host);
           return;
         }

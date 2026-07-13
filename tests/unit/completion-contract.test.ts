@@ -36,5 +36,8 @@ describe("completion contracts", () => {
     expect(() => createCompletionContract("goal", Array.from({ length: 21 }, (_, index) => `npm test -- ${index}`))).toThrow(
       "At most 20 verifier commands",
     );
+    expect(() => createCompletionContract("goal", [], Array.from({ length: 51 }, (_, index) => `constraint ${index}`))).toThrow(
+      "At most 50 constraints",
+    );
   });
 });

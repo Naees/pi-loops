@@ -19,8 +19,17 @@ describe("persistent notices", () => {
 
     await writeFile(path, "not-json");
     await expect(notices.shouldShowSubagentsRecommendation()).rejects.toBeInstanceOf(SyntaxError);
-    await writeFile(path, JSON.stringify({ schemaVersion: 1, subagentsRecommended: true, hostile: true }));
-    await expect(notices.shouldShowSubagentsRecommendation()).rejects.toThrow("notice record is invalid");
+    for (const invalid of [
+      null,
+      [],
+      {},
+      { schemaVersion: 2, subagentsRecommended: true },
+      { schemaVersion: 1, subagentsRecommended: "yes" },
+      { schemaVersion: 1, subagentsRecommended: true, hostile: true },
+    ]) {
+      await writeFile(path, JSON.stringify(invalid));
+      await expect(notices.shouldShowSubagentsRecommendation()).rejects.toThrow("notice record is invalid");
+    }
     await writeFile(path, Buffer.alloc(16 * 1024 + 1));
     await expect(notices.shouldShowSubagentsRecommendation()).rejects.toThrow("notice record is oversized");
   });

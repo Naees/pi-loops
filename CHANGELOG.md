@@ -29,7 +29,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Consolidated attended-run initialization, UTF-8 record truncation, and npm package-boundary checks.
+- Consolidated completion/evaluation validation, versioned JSON record I/O, package inventory policy, attended-run initialization, and UTF-8 record truncation.
 - Separated extension command parsing and presentation, centralized record-file I/O and error normalization, and isolated scheduled restart preparation from execution.
 - Generalized unattended execution so scheduled and proactive writers share worktree isolation, RPC lifecycle, finite budgets, repository guards, and review-branch finalization.
 - Bounded event ingress, error notifications, filesystem watcher admission, JSON record reads, and per-project trigger definitions; coordinated shutdown now attempts every safety cleanup before reporting failures.
@@ -38,6 +38,8 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Atomic JSON writes now reject non-serializable roots and measure the exact formatted on-disk payload before bounded replacement, preventing invalid or self-oversized records.
+- RPC response data now rejects arrays instead of accepting them as record-shaped handshake or cycle data.
 - The lockfile now supports clean installation with the minimum Node 22.19 toolchain's npm 10 as well as current npm.
 - Release-candidate checksum files now contain artifact-relative tarball names and verify correctly after download.
 - Malformed-response RPC tests now pass fixture envelopes as data rather than interpolating serialized values into child source code.

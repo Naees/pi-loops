@@ -6,9 +6,11 @@ const budget = { maxActiveMs: 1_000, maxCycles: 3, stallThreshold: 2 };
 describe("budget accounting", () => {
   it("counts only active time", () => {
     const active = startActiveTime(EMPTY_BUDGET_LEDGER, 100);
+    expect(startActiveTime(active, 200)).toBe(active);
     expect(currentActiveMs(active, 400)).toBe(300);
 
     const paused = pauseActiveTime(active, 500);
+    expect(pauseActiveTime(paused, 5_000)).toBe(paused);
     expect(currentActiveMs(paused, 5_000)).toBe(400);
 
     const resumed = startActiveTime(paused, 6_000);
@@ -27,5 +29,6 @@ describe("budget accounting", () => {
   it("rejects a backwards active-time clock", () => {
     const active = startActiveTime(EMPTY_BUDGET_LEDGER, 100);
     expect(() => pauseActiveTime(active, 99)).toThrow("clock moved backwards");
+    expect(() => currentActiveMs(active, 99)).toThrow("clock moved backwards");
   });
 });

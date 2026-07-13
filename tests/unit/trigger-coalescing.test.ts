@@ -71,6 +71,9 @@ describe("trigger coalescing", () => {
       new Date("2026-07-12T12:02:00.000Z"),
     ).trigger;
     expect(() => completeTriggerOccurrence(pending, "run_1234abcd", new Date())).toThrow("valid replacement run ID");
+    expect(() => interruptTriggerOccurrence(pending, "run_deadbeef", new Date())).toThrow("not running occurrence");
     expect(() => resumeTriggerOccurrence(trigger({ state: "paused" }), "run_1234abcd", new Date())).toThrow("not available");
+    expect(() => resumeTriggerOccurrence(trigger(), "invalid", new Date())).toThrow("Invalid run ID");
+    expect(() => fireTrigger(trigger(), "run_1234abcd", new Date(Number.NaN))).toThrow("clock must be a valid date");
   });
 });

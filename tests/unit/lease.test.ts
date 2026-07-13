@@ -109,6 +109,19 @@ describe("writer leases", () => {
     await expect(assertWriterLeases([])).rejects.toThrow("At least one writer lease");
   });
 
+  it("attempts every reverse-order release before aggregating failures", async () => {
+    const first = await acquireWriterLease(await leasePath(), 5_000);
+    const secondPath = await leasePath();
+    const second = await acquireWriterLease(secondPath, 5_000);
+    const forgedFirst = { ...first, record: { ...first.record, token: "forged" } };
+
+    await expect(releaseWriterLeases([forgedFirst, second])).rejects.toThrow(AggregateError);
+    const replacementSecond = await acquireWriterLease(secondPath, 5_000);
+    await releaseWriterLease(replacementSecond);
+    await expect(assertWriterLease(first)).resolves.toBeUndefined();
+    await releaseWriterLease(first);
+  });
+
   it("signals active owners when the proper-lockfile guard is compromised", async () => {
     const path = await leasePath();
     const lease = await acquireWriterLease(path, 2_000);

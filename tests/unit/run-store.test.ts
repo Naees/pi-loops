@@ -120,10 +120,13 @@ describe("run store", () => {
   });
 
   it.each([
-    { complete: false, needsUser: false, reason: "", failedCriteria: [], feedback: null },
-    { complete: true, needsUser: true, reason: "done", failedCriteria: [], feedback: null },
-    { complete: true, needsUser: false, reason: "done", failedCriteria: ["tests"], feedback: null },
-  ])("rejects contradictory stored evaluations: %j", async (latestEvaluation) => {
+    ["empty reasons", { complete: false, needsUser: false, reason: "", failedCriteria: [], feedback: null }],
+    ["completed decisions requiring a user", { complete: true, needsUser: true, reason: "done", failedCriteria: [], feedback: null }],
+    ["completed decisions with failures", { complete: true, needsUser: false, reason: "done", failedCriteria: ["tests"], feedback: null }],
+    ["unknown fields", { complete: false, needsUser: false, reason: "incomplete", failedCriteria: [], feedback: null, extra: true }],
+    ["too many failed criteria", { complete: false, needsUser: false, reason: "incomplete", failedCriteria: Array.from({ length: 51 }, () => "criterion"), feedback: null }],
+    ["oversized feedback", { complete: false, needsUser: false, reason: "incomplete", failedCriteria: [], feedback: "x".repeat(16 * 1024 + 1) }],
+  ] as const)("rejects invalid stored evaluations with %s", async (_label, latestEvaluation) => {
     const runs = await store();
     await expect(runs.save({ ...run(1), latestEvaluation })).rejects.toThrow("invalid shape");
   });

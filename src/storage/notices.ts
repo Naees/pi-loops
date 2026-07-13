@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { hasOnlyKeys, isRecord } from "../shared/validation.js";
 import { writeJsonAtomic } from "./atomic-file.js";
 import { readBoundedJsonFile } from "./json-record-files.js";
 
@@ -28,14 +29,10 @@ export class NoticeStore {
   async #read(): Promise<NoticeRecord> {
     const value = await readBoundedJsonFile(this.#path, 16 * 1024, "Pi Loops notice record is oversized");
     if (value === undefined) return DEFAULT_NOTICES;
-    if (
-      typeof value !== "object" || value === null || Array.isArray(value) ||
-      Object.keys(value).some((key) => key !== "schemaVersion" && key !== "subagentsRecommended") ||
-      (value as Record<string, unknown>).schemaVersion !== 1 ||
-      typeof (value as Record<string, unknown>).subagentsRecommended !== "boolean"
-    ) {
+    if (!isRecord(value) || !hasOnlyKeys(value, ["schemaVersion", "subagentsRecommended"]) ||
+      value.schemaVersion !== 1 || typeof value.subagentsRecommended !== "boolean") {
       throw new Error("Pi Loops notice record is invalid");
     }
-    return value as NoticeRecord;
+    return { schemaVersion: 1, subagentsRecommended: value.subagentsRecommended };
   }
 }

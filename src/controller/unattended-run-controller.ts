@@ -293,11 +293,12 @@ export class UnattendedRunController {
         };
         run = await this.#move(store, run, "verifying", `${workLabel} worker cycle settled`);
         const evidence = collector.evidenceFor(contract);
+        const evidencePassed = requiredEvidencePassed(evidence);
         run = { ...run, latestEvidence: evidence };
         await store.save(run);
 
         let decision: EvaluationDecision;
-        if (!requiredEvidencePassed(evidence)) {
+        if (!evidencePassed) {
           decision = deterministicFailureDecision(evidence);
         } else {
           run = await this.#move(store, run, "evaluating", `${workLabel} deterministic evidence passed`);
@@ -312,7 +313,7 @@ export class UnattendedRunController {
         run = { ...run, latestEvaluation: decision };
         await store.save(run);
 
-        if (decision.complete && requiredEvidencePassed(evidence)) {
+        if (decision.complete && evidencePassed) {
           if (run.state !== "evaluating") run = await this.#move(store, run, "evaluating", "Deterministic completion accepted");
           run = await this.#move(store, run, "finalizing", `${workLabel} completion accepted`);
           await runningWorker.stop();

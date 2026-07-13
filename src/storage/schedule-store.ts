@@ -9,14 +9,13 @@ import {
   type ScheduleState,
   type ScheduleTiming,
 } from "../shared/types.js";
-import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget } from "../shared/validation.js";
-import { isBoundedNonEmptyStringArray, isCanonicalIsoDate } from "./record-validation.js";
-import { writeJsonAtomic } from "./atomic-file.js";
-import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
+import { hasOnlyKeys, isPositiveSafeInteger, isRecord } from "../shared/validation.js";
+import { hasValidStoredCompletionDefinition, isCanonicalIsoDate } from "./record-validation.js";
+import { listRecordIds, readStoredJsonRecord, writeStoredJsonRecord } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
-import { prepareStoredState } from "./state-migrations.js";
 
 const MAX_SCHEDULE_RECORD_BYTES = 1024 * 1024;
+const OVERSIZED_SCHEDULE_RECORD = `Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`;
 const PAUSE_REASONS: readonly SchedulePauseReason[] = ["completed", "missed", "interrupted", "user"];
 
 function parseTiming(value: unknown): ScheduleTiming | undefined {
@@ -84,10 +83,7 @@ export function parseScheduleRecord(value: unknown): ScheduleRecord {
     typeof value.projectId !== "string" || !isProjectId(value.projectId) ||
     typeof value.projectRoot !== "string" || !isAbsolute(value.projectRoot) || createProjectId(value.projectRoot) !== value.projectId ||
     typeof value.state !== "string" || !SCHEDULE_STATES.includes(value.state as ScheduleState) ||
-    typeof value.goal !== "string" || value.goal.trim().length === 0 || Buffer.byteLength(value.goal, "utf8") > 16 * 1024 ||
-    !isBoundedNonEmptyStringArray(value.constraints, 50, 4 * 1024) ||
-    !isBoundedNonEmptyStringArray(value.verifierCommands, 20, 4 * 1024) ||
-    !isRunBudget(value.budget) ||
+    !hasValidStoredCompletionDefinition(value) ||
     typeof value.expression !== "string" || value.expression.trim().length === 0 || Buffer.byteLength(value.expression, "utf8") > 4 * 1024 ||
     typeof value.normalizedExpression !== "string" || value.normalizedExpression.trim().length === 0 || Buffer.byteLength(value.normalizedExpression, "utf8") > 8 * 1024 ||
     timing === undefined ||
@@ -145,31 +141,25 @@ export class ScheduleStore {
     await this.#assertMutationLease();
     if (schedule.projectId !== this.#projectId) throw new Error("Schedule project ID does not match this store");
     parseScheduleRecord(schedule);
-    if (Buffer.byteLength(JSON.stringify(schedule), "utf8") > MAX_SCHEDULE_RECORD_BYTES) {
-      throw new Error(`Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`);
-    }
-    await writeJsonAtomic(this.#path(schedule.scheduleId), schedule);
+    await writeStoredJsonRecord(this.#path(schedule.scheduleId), schedule, MAX_SCHEDULE_RECORD_BYTES, OVERSIZED_SCHEDULE_RECORD);
   }
 
   async load(scheduleId: string): Promise<ScheduleRecord | undefined> {
     const path = this.#path(scheduleId);
-    const value = await readBoundedJsonFile(
+    const loaded = await readStoredJsonRecord(
       path,
+      "schedule",
       MAX_SCHEDULE_RECORD_BYTES,
-      `Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`,
+      OVERSIZED_SCHEDULE_RECORD,
+      parseScheduleRecord,
     );
-    if (value === undefined) return undefined;
-    const prepared = prepareStoredState("schedule", value);
-    const schedule = parseScheduleRecord(prepared.value);
-    if (schedule.projectId !== this.#projectId) throw new Error("Stored schedule belongs to a different project");
-    if (prepared.migrated) {
+    if (loaded === undefined) return undefined;
+    if (loaded.record.projectId !== this.#projectId) throw new Error("Stored schedule belongs to a different project");
+    if (loaded.migrated) {
       await this.#assertMutationLease();
-      if (Buffer.byteLength(JSON.stringify(schedule), "utf8") > MAX_SCHEDULE_RECORD_BYTES) {
-        throw new Error(`Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`);
-      }
-      await writeJsonAtomic(path, schedule);
+      await writeStoredJsonRecord(path, loaded.record, MAX_SCHEDULE_RECORD_BYTES, OVERSIZED_SCHEDULE_RECORD);
     }
-    return schedule;
+    return loaded.record;
   }
 
   async list(): Promise<ScheduleRecord[]> {

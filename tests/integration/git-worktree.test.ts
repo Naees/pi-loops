@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   DirtyRepositoryError,
   GitWorktreeManager,
   ManagedWorktreeConflictError,
+  NonGitRepositoryError,
   WorktreeNeedsUserError,
 } from "../../src/worker/git-worktree.js";
 
@@ -52,6 +53,20 @@ describe("Git worktree manager", () => {
     expect(git(repositoryRoot, ["branch", "--show-current"])).toBe(activeBranch);
     expect(await readFile(join(repositoryRoot, "README.md"), "utf8")).toBe("# initial\n");
     expect(git(repositoryRoot, ["show", `${finalized.branch}:result.txt`])).toBe("scheduled result");
+  });
+
+  it("rejects non-Git roots, invalid run IDs, and managed path collisions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-loops-not-a-repository-"));
+    temporaryDirectories.push(root);
+    const manager = new GitWorktreeManager();
+    await expect(manager.inspectRepository(root)).rejects.toBeInstanceOf(NonGitRepositoryError);
+
+    const { repositoryRoot, managedRoot } = await repository();
+    const identity = await manager.inspectRepository(repositoryRoot);
+    await expect(manager.create("invalid", identity, managedRoot)).rejects.toThrow("Invalid run ID");
+    const occupied = join(managedRoot, "run_1234abcd");
+    await mkdir(occupied, { recursive: true });
+    await expect(manager.create("run_1234abcd", identity, managedRoot)).rejects.toBeInstanceOf(ManagedWorktreeConflictError);
   });
 
   it("rejects dirty source repositories and branch collisions", async () => {

@@ -51,7 +51,37 @@ describe("stored state migrations", () => {
     expect(second).toHaveBeenCalledOnce();
   });
 
-  it("rejects skipped versions, incorrect outputs, and invalid targets", () => {
+  it("keeps source state isolated even when a migration mutates its cloned input", () => {
+    const input = { schemaVersion: 1, nested: { value: "original" } };
+    const migration: StoredStateMigration = {
+      kind: "run",
+      fromVersion: 1,
+      toVersion: 2,
+      migrate: (record) => {
+        (record.nested as { value: string }).value = "migrated";
+        return { ...record, schemaVersion: 2 };
+      },
+    };
+
+    expect(applyStoredStateMigrations("run", input, 2, [migration]).value).toEqual({
+      schemaVersion: 2,
+      nested: { value: "migrated" },
+    });
+    expect(input).toEqual({ schemaVersion: 1, nested: { value: "original" } });
+  });
+
+  it("rejects ambiguous, skipped, incorrect, and invalid migration paths", () => {
+    const duplicate = (label: string): StoredStateMigration => ({
+      kind: "run",
+      fromVersion: 1,
+      toVersion: 2,
+      migrate: (record) => ({ ...record, schemaVersion: 2, label }),
+    });
+    expect(() => applyStoredStateMigrations("run", { schemaVersion: 1 }, 2, [duplicate("first"), duplicate("second")]))
+      .toThrow("schemaVersion 1 has no migration to version 2");
+    expect(() => applyStoredStateMigrations("run", { schemaVersion: 1 }, 2, [{ ...duplicate("wrong kind"), kind: "trigger" }]))
+      .toThrow("schemaVersion 1 has no migration to version 2");
+
     expect(() => applyStoredStateMigrations("run", { schemaVersion: 1 }, 2, [{
       kind: "run",
       fromVersion: 1,
@@ -64,7 +94,9 @@ describe("stored state migrations", () => {
       toVersion: 2,
       migrate: (record) => ({ ...record, schemaVersion: 1 }),
     }])).toThrow("returned an invalid schemaVersion");
-    expect(() => applyStoredStateMigrations("run", { schemaVersion: 1 }, 0, []))
-      .toThrow("Target state schema version must be a positive safe integer");
+    for (const target of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => applyStoredStateMigrations("run", { schemaVersion: 1 }, target, []))
+        .toThrow("Target state schema version must be a positive safe integer");
+    }
   });
 });

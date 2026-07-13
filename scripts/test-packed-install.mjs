@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { findForbiddenPackagePaths } from "./package-boundary.mjs";
+import { findForbiddenPackagePaths, findMissingPackagePaths, REQUIRED_PACKAGE_PATHS } from "./package-boundary.mjs";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-loops-packed-"));
 
@@ -80,6 +80,8 @@ try {
 
   const forbidden = findForbiddenPackagePaths(report.files);
   if (forbidden.length > 0) throw new Error(`Packed forbidden files: ${forbidden.join(", ")}`);
+  const missing = findMissingPackagePaths(report.files);
+  if (missing.length > 0) throw new Error(`Packed required files are missing: ${missing.join(", ")}`);
 
   const tarball = join(temporaryRoot, report.filename);
   const installRoot = join(temporaryRoot, "install");
@@ -94,9 +96,7 @@ try {
   if (!Array.isArray(manifest.pi?.skills) || !manifest.pi.skills.includes("./skills")) {
     throw new Error("Installed package does not expose the pi-loops skill");
   }
-  await readFile(join(packageRoot, "skills", "pi-loops", "SKILL.md"), "utf8");
-  await readFile(join(packageRoot, "docs", "operations.md"), "utf8");
-  await readFile(join(packageRoot, "docs", "integrations.md"), "utf8");
+  await Promise.all(REQUIRED_PACKAGE_PATHS.map((path) => readFile(join(packageRoot, path), "utf8")));
 
   const extensionPath = join(packageRoot, "src", "extension", "index.ts");
   const piExecutable = process.env.PI_LOOPS_TEST_PI ?? "pi";

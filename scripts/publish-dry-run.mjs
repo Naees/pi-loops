@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { findForbiddenPackagePaths } from "./package-boundary.mjs";
+import { findForbiddenPackagePaths, findMissingPackagePaths } from "./package-boundary.mjs";
 
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 if (manifest.name !== "@naees/pi-loops" || typeof manifest.version !== "string") {
@@ -33,10 +33,8 @@ if (report.name !== manifest.name || report.version !== manifest.version || repo
 }
 const forbidden = findForbiddenPackagePaths(report.files);
 if (forbidden.length > 0) throw new Error(`Publish dry-run contains forbidden files: ${forbidden.join(", ")}`);
-const paths = report.files.map((file) => file.path);
-for (const required of ["docs/integrations.md", "docs/operations.md", "skills/pi-loops/SKILL.md", "src/extension/index.ts"]) {
-  if (!paths.includes(required)) throw new Error(`Publish dry-run is missing required file: ${required}`);
-}
+const missing = findMissingPackagePaths(report.files);
+if (missing.length > 0) throw new Error(`Publish dry-run is missing required file: ${missing[0]}`);
 if (report.bundled.length > 0) throw new Error(`Publish dry-run unexpectedly bundles dependencies: ${report.bundled.join(", ")}`);
 
 console.log(`Publish dry-run passed: ${report.id}; ${report.entryCount} files; ${report.size} packed bytes; public access with provenance required. No package was published.`);

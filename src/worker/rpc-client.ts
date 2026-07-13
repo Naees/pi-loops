@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+// Production lifecycle scripts load this module with Node's native TypeScript runner, which requires real .ts specifiers.
 import { asError } from "../shared/errors.ts";
 import { RpcJsonlDecoder } from "./rpc-jsonl.ts";
 

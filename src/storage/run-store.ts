@@ -1,16 +1,17 @@
 import { rm, stat, utimes } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { COMPLETION_LIMITS } from "../contracts/completion-limits.js";
 import { canTransition, transitionRun } from "../controller/state-machine.js";
+import { isEvaluationDecision } from "../evidence/evaluation-decision.js";
 import { isProjectId, isRunId, isScheduleId, isTriggerId } from "../shared/ids.js";
 import { RUN_MODES, RUN_STATES, type RunRecord, type RunState } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord, isRunBudget, isStringArray } from "../shared/validation.js";
-import { writeJsonAtomic } from "./atomic-file.js";
-import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
+import { listRecordIds, readStoredJsonRecord, writeStoredJsonRecord } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 import { selectRetentionEvictions } from "./retention.js";
-import { prepareStoredState } from "./state-migrations.js";
 
 const MAX_RUN_RECORD_BYTES = 2 * 1024 * 1024;
+const OVERSIZED_RUN_RECORD = `Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`;
 const ACTIVE_CRASH_STATES = new Set<RunState>([
   "configuring",
   "preflight",
@@ -42,26 +43,11 @@ function isStoredEvidence(value: unknown): boolean {
   return (
     typeof value.verifierId === "string" && value.verifierId.length <= 128 &&
     typeof value.criterion === "string" && Buffer.byteLength(value.criterion, "utf8") <= 4 * 1024 &&
-    typeof value.command === "string" && Buffer.byteLength(value.command, "utf8") <= 4 * 1024 &&
+    typeof value.command === "string" && Buffer.byteLength(value.command, "utf8") <= COMPLETION_LIMITS.itemBytes &&
     typeof value.observed === "boolean" &&
     typeof value.passed === "boolean" &&
     typeof value.summary === "string" && Buffer.byteLength(value.summary, "utf8") <= 16 * 1024 &&
     (value.toolCallId === undefined || typeof value.toolCallId === "string")
-  );
-}
-
-function isStoredEvaluation(value: unknown): boolean {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["complete", "needsUser", "reason", "failedCriteria", "feedback"])) return false;
-  return (
-    typeof value.complete === "boolean" &&
-    typeof value.needsUser === "boolean" &&
-    typeof value.reason === "string" && value.reason.trim().length > 0 && Buffer.byteLength(value.reason, "utf8") <= 8 * 1024 &&
-    isStringArray(value.failedCriteria) && value.failedCriteria.length <= 50 &&
-    value.failedCriteria.every((criterion) => Buffer.byteLength(criterion, "utf8") <= 4 * 1024) &&
-    (typeof value.feedback === "string" || value.feedback === null) &&
-    (typeof value.feedback !== "string" || Buffer.byteLength(value.feedback, "utf8") <= 16 * 1024) &&
-    !(value.complete && value.needsUser) &&
-    !(value.complete && value.failedCriteria.length > 0)
   );
 }
 
@@ -175,11 +161,11 @@ function parseRunRecord(value: unknown): RunRecord {
     value.goal.trim().length === 0 ||
     Buffer.byteLength(value.goal, "utf8") > 32 * 1024 ||
     (value.constraints !== undefined &&
-      (!isStringArray(value.constraints) || value.constraints.length > 50 ||
-        value.constraints.some((item) => Buffer.byteLength(item, "utf8") > 4 * 1024))) ||
+      (!isStringArray(value.constraints) || value.constraints.length > COMPLETION_LIMITS.constraintCount ||
+        value.constraints.some((item) => Buffer.byteLength(item, "utf8") > COMPLETION_LIMITS.itemBytes))) ||
     (value.verifierCommands !== undefined &&
-      (!isStringArray(value.verifierCommands) || value.verifierCommands.length > 20 ||
-        value.verifierCommands.some((item) => Buffer.byteLength(item, "utf8") > 4 * 1024))) ||
+      (!isStringArray(value.verifierCommands) || value.verifierCommands.length > COMPLETION_LIMITS.verifierCount ||
+        value.verifierCommands.some((item) => Buffer.byteLength(item, "utf8") > COMPLETION_LIMITS.itemBytes))) ||
     !isRunBudget(value.budget) ||
     (value.budgetEpoch !== undefined && !isPositiveSafeInteger(value.budgetEpoch)) ||
     (value.budgetHistory !== undefined &&
@@ -195,7 +181,7 @@ function parseRunRecord(value: unknown): RunRecord {
     (value.latestWorkerSummary !== undefined &&
       (typeof value.latestWorkerSummary !== "string" || Buffer.byteLength(value.latestWorkerSummary, "utf8") > 32 * 1024)) ||
     (value.latestEvidence !== undefined && (!Array.isArray(value.latestEvidence) || !value.latestEvidence.every(isStoredEvidence))) ||
-    (value.latestEvaluation !== undefined && !isStoredEvaluation(value.latestEvaluation)) ||
+    (value.latestEvaluation !== undefined && !isEvaluationDecision(value.latestEvaluation)) ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
     typeof value.updatedAt !== "string" ||
@@ -252,31 +238,19 @@ export class RunStore {
     await this.#assertMutationLease();
     if (run.projectId !== this.#projectId) throw new Error("Run project ID does not match this store");
     parseRunRecord(run);
-    if (Buffer.byteLength(JSON.stringify(run), "utf8") > MAX_RUN_RECORD_BYTES) {
-      throw new Error(`Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`);
-    }
-    await writeJsonAtomic(this.#path(run.runId), run);
+    await writeStoredJsonRecord(this.#path(run.runId), run, MAX_RUN_RECORD_BYTES, OVERSIZED_RUN_RECORD);
   }
 
   async load(runId: string): Promise<RunRecord | undefined> {
     const path = this.#path(runId);
-    const value = await readBoundedJsonFile(
-      path,
-      MAX_RUN_RECORD_BYTES,
-      `Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`,
-    );
-    if (value === undefined) return undefined;
-    const prepared = prepareStoredState("run", value);
-    const run = parseRunRecord(prepared.value);
-    if (run.projectId !== this.#projectId) throw new Error("Stored run belongs to a different project");
-    if (prepared.migrated) {
+    const loaded = await readStoredJsonRecord(path, "run", MAX_RUN_RECORD_BYTES, OVERSIZED_RUN_RECORD, parseRunRecord);
+    if (loaded === undefined) return undefined;
+    if (loaded.record.projectId !== this.#projectId) throw new Error("Stored run belongs to a different project");
+    if (loaded.migrated) {
       await this.#assertMutationLease();
-      if (Buffer.byteLength(JSON.stringify(run), "utf8") > MAX_RUN_RECORD_BYTES) {
-        throw new Error(`Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`);
-      }
-      await writeJsonAtomic(path, run);
+      await writeStoredJsonRecord(path, loaded.record, MAX_RUN_RECORD_BYTES, OVERSIZED_RUN_RECORD);
     }
-    return run;
+    return loaded.record;
   }
 
   async list(): Promise<RunRecord[]> {

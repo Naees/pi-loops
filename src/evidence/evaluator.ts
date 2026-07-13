@@ -1,7 +1,15 @@
 import { complete, type UserMessage } from "@earendil-works/pi-ai/compat";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { COMPLETION_LIMITS } from "../contracts/completion-limits.js";
+import { errorMessage } from "../shared/errors.js";
 import { truncateUtf8 } from "../shared/text.js";
-import { isStringArray } from "../shared/validation.js";
+import type { StoredEvaluationDecision } from "../shared/types.js";
+import { isRecord } from "../shared/validation.js";
+import {
+  hasCoherentEvaluationDecision,
+  hasEvaluationDecisionShape,
+  unknownEvaluationDecisionKeys,
+} from "./evaluation-decision.js";
 
 export interface EvaluationInput {
   readonly goal: string;
@@ -15,13 +23,7 @@ export interface EvaluationInput {
   readonly previousFeedback?: string;
 }
 
-export interface EvaluationDecision {
-  readonly complete: boolean;
-  readonly needsUser: boolean;
-  readonly reason: string;
-  readonly failedCriteria: readonly string[];
-  readonly feedback: string | null;
-}
+export interface EvaluationDecision extends StoredEvaluationDecision {}
 
 export interface CompletionEvaluator {
   evaluate(input: EvaluationInput, signal?: AbortSignal): Promise<EvaluationDecision>;
@@ -66,10 +68,11 @@ Do not include markdown, commentary, or tool calls.`;
 function boundedEvaluationInput(input: EvaluationInput): EvaluationInput {
   return {
     goal: truncateUtf8(input.goal, MAX_EVALUATOR_TEXT_BYTES),
-    constraints: input.constraints.slice(0, 50).map((constraint) => truncateUtf8(constraint, 4 * 1024)),
+    constraints: input.constraints.slice(0, COMPLETION_LIMITS.constraintCount)
+      .map((constraint) => truncateUtf8(constraint, COMPLETION_LIMITS.itemBytes)),
     workerSummary: truncateUtf8(input.workerSummary, MAX_EVALUATOR_TEXT_BYTES),
-    verifierEvidence: input.verifierEvidence.slice(0, 20).map((evidence) => ({
-      criterion: truncateUtf8(evidence.criterion, 4 * 1024),
+    verifierEvidence: input.verifierEvidence.slice(0, COMPLETION_LIMITS.verifierCount).map((evidence) => ({
+      criterion: truncateUtf8(evidence.criterion, COMPLETION_LIMITS.itemBytes),
       passed: evidence.passed,
       summary: truncateUtf8(evidence.summary, 8 * 1024),
     })),
@@ -85,44 +88,20 @@ export function parseEvaluationDecision(text: string): EvaluationDecision {
   try {
     value = JSON.parse(text.trim()) as unknown;
   } catch (error) {
-    throw new InvalidEvaluatorResponseError(`Evaluator returned invalid JSON: ${(error as Error).message}`);
+    throw new InvalidEvaluatorResponseError(`Evaluator returned invalid JSON: ${errorMessage(error)}`);
   }
 
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new InvalidEvaluatorResponseError("Evaluator response must be an object");
-  }
-  const record = value as Record<string, unknown>;
-  const allowed = new Set(["complete", "needsUser", "reason", "failedCriteria", "feedback"]);
-  const unknown = Object.keys(record).filter((key) => !allowed.has(key));
+  if (!isRecord(value)) throw new InvalidEvaluatorResponseError("Evaluator response must be an object");
+  const unknown = unknownEvaluationDecisionKeys(value);
   if (unknown.length > 0) throw new InvalidEvaluatorResponseError(`Unknown evaluator field(s): ${unknown.join(", ")}`);
-  if (
-    typeof record.complete !== "boolean" ||
-    typeof record.needsUser !== "boolean" ||
-    typeof record.reason !== "string" ||
-    record.reason.trim().length === 0 ||
-    Buffer.byteLength(record.reason, "utf8") > 8 * 1024 ||
-    !isStringArray(record.failedCriteria) ||
-    record.failedCriteria.length > 50 ||
-    record.failedCriteria.some((criterion) => Buffer.byteLength(criterion, "utf8") > 4 * 1024) ||
-    !(typeof record.feedback === "string" || record.feedback === null) ||
-    (typeof record.feedback === "string" && Buffer.byteLength(record.feedback, "utf8") > 16 * 1024)
-  ) {
-    throw new InvalidEvaluatorResponseError("Evaluator response has an invalid shape");
-  }
-  if (record.complete && record.needsUser) {
-    throw new InvalidEvaluatorResponseError("A completed evaluation cannot also require the user");
-  }
-  if (record.complete && record.failedCriteria.length > 0) {
+  if (!hasEvaluationDecisionShape(value)) throw new InvalidEvaluatorResponseError("Evaluator response has an invalid shape");
+  if (!hasCoherentEvaluationDecision(value)) {
+    if (value.complete && value.needsUser) {
+      throw new InvalidEvaluatorResponseError("A completed evaluation cannot also require the user");
+    }
     throw new InvalidEvaluatorResponseError("A completed evaluation cannot contain failed criteria");
   }
-
-  return {
-    complete: record.complete,
-    needsUser: record.needsUser,
-    reason: record.reason,
-    failedCriteria: record.failedCriteria,
-    feedback: record.feedback,
-  };
+  return value;
 }
 
 export class CurrentModelEvaluator implements CompletionEvaluator {
@@ -147,14 +126,15 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
       throw new EvaluatorUnavailableError(auth.ok ? `No API key is available for ${model.provider}` : auth.error);
     }
 
-    const userMessage: UserMessage = {
-      role: "user",
-      content: [{ type: "text", text: JSON.stringify(boundedInput) }],
-      timestamp: Date.now(),
-    };
-    if (Buffer.byteLength(JSON.stringify(boundedInput), "utf8") > MAX_EVALUATOR_PAYLOAD_BYTES) {
+    const serializedInput = JSON.stringify(boundedInput);
+    if (Buffer.byteLength(serializedInput, "utf8") > MAX_EVALUATOR_PAYLOAD_BYTES) {
       throw new InvalidEvaluatorResponseError("Evaluator input exceeds the bounded payload limit");
     }
+    const userMessage: UserMessage = {
+      role: "user",
+      content: [{ type: "text", text: serializedInput }],
+      timestamp: Date.now(),
+    };
 
     const response = await complete(
       model,

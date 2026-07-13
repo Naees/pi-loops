@@ -21,10 +21,17 @@ describe("UTF-8 text truncation", () => {
     expect(truncated.endsWith(TRUNCATION_MARKER)).toBe(true);
   });
 
-  it("handles limits shorter than the truncation marker", () => {
+  it("handles zero and limits shorter than the truncation marker", () => {
+    expect(truncateUtf8("long text", 0)).toBe("");
     const truncated = truncateUtf8("long text", 8);
     expect(Buffer.byteLength(truncated, "utf8")).toBeLessThanOrEqual(8);
     expect(TRUNCATION_MARKER.startsWith(truncated)).toBe(true);
     expect(truncated).not.toContain("�");
+  });
+
+  it("rejects invalid byte limits", () => {
+    for (const maxBytes of [-1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => truncateUtf8("text", maxBytes)).toThrow("non-negative safe integer");
+    }
   });
 });

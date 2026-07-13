@@ -45,7 +45,7 @@ export interface WorkerCycleResult {
 }
 
 function responseData(response: RpcEnvelope): Record<string, unknown> {
-  if (response.type !== "response" || response.success !== true || typeof response.data !== "object" || response.data === null) {
+  if (response.type !== "response" || response.success !== true || typeof response.data !== "object" || response.data === null || Array.isArray(response.data)) {
     throw new Error(`RPC worker returned invalid response data: ${JSON.stringify(response)}`);
   }
   return response.data as Record<string, unknown>;

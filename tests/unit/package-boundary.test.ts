@@ -1,6 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { findForbiddenPackagePaths } from "../../scripts/package-boundary.mjs";
+import {
+  findForbiddenPackagePaths,
+  findMissingPackagePaths,
+  packageFilePaths,
+  REQUIRED_PACKAGE_PATHS,
+} from "../../scripts/package-boundary.mjs";
 
 describe("package boundary", () => {
   it("uses an explicit public files whitelist", async () => {
@@ -20,6 +25,12 @@ describe("package boundary", () => {
     expect(manifest.files).not.toContain("tests/");
     expect(manifest.files).toContain("skills/");
     expect(manifest.files).toContain("docs/");
+    expect(REQUIRED_PACKAGE_PATHS).toEqual([
+      "docs/integrations.md",
+      "docs/operations.md",
+      "skills/pi-loops/SKILL.md",
+      "src/extension/index.ts",
+    ]);
     expect(manifest.pi).toEqual({ extensions: ["./src/extension/index.ts"], skills: ["./skills"] });
     expect(manifest.engines?.node).toBe(">=22.19.0");
     expect(manifest.publishConfig).toEqual({ access: "public", provenance: true });
@@ -34,19 +45,24 @@ describe("package boundary", () => {
     expect(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []).not.toContain("pi-subagents");
   });
 
-  it("rejects forbidden package paths in string and npm-pack object forms", () => {
-    expect(findForbiddenPackagePaths([
+  it("normalizes package inventories and reports forbidden or missing paths", () => {
+    const files = [
       "README.md",
+      ...REQUIRED_PACKAGE_PATHS,
       ".project-design/brief.md",
       { path: "tests/unit/example.test.ts" },
       { path: ".pi-subagents/output.json" },
       { path: "coverage/index.html" },
       { path: 42 },
-    ])).toEqual([
+    ];
+    expect(packageFilePaths(files)).not.toContain(42);
+    expect(findForbiddenPackagePaths(files)).toEqual([
       ".project-design/brief.md",
       "tests/unit/example.test.ts",
       ".pi-subagents/output.json",
       "coverage/index.html",
     ]);
+    expect(findMissingPackagePaths(files)).toEqual([]);
+    expect(findMissingPackagePaths(["README.md", REQUIRED_PACKAGE_PATHS[0]])).toEqual(REQUIRED_PACKAGE_PATHS.slice(1));
   });
 });

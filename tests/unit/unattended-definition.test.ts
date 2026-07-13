@@ -85,6 +85,21 @@ describe("unattended definitions", () => {
       },
     };
     expect(isSafeUnattendedRestart(interrupted, definition)).toBe(true);
+    for (const changed of [
+      { ...definition, sourceId: "trigger_deadbeef" },
+      { ...definition, goal: "different goal" },
+      { ...definition, constraints: ["different constraint"] },
+      { ...definition, verifierCommands: ["npm run lint"] },
+      { ...definition, budget: { ...definition.budget, maxCycles: definition.budget.maxCycles + 1 } },
+    ]) {
+      expect(isSafeUnattendedRestart(interrupted, changed)).toBe(false);
+    }
+    const incompleteWorker: { -readonly [Key in keyof NonNullable<typeof interrupted.worker>]: NonNullable<typeof interrupted.worker>[Key] } = {
+      ...interrupted.worker!,
+    };
+    delete incompleteWorker.sessionId;
+    delete incompleteWorker.sessionFile;
+    expect(isSafeUnattendedRestart({ ...interrupted, worker: incompleteWorker }, definition)).toBe(false);
     expect(prepareUnattendedRestart(interrupted, new Date("2026-07-12T12:02:00.000Z")))
       .toEqual(expect.objectContaining({ budgetEpoch: 1, budgetDeadlineAt: interrupted.budgetDeadlineAt }));
 

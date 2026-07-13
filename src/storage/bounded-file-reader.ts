@@ -4,6 +4,7 @@ export interface BoundedReadableFile {
 }
 
 export async function readBoundedFile(handle: BoundedReadableFile, maxBytes: number, oversizedMessage: string): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error("maxBytes must be a non-negative safe integer");
   const metadata = await handle.stat();
   if (metadata.size > maxBytes) throw new Error(oversizedMessage);
   const buffer = Buffer.alloc(maxBytes + 1);

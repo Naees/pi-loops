@@ -19,4 +19,10 @@ describe("no-progress detection", () => {
     expect(changed.equivalentFailures).toBe(1);
     expect(isStalled(changed, 2)).toBe(false);
   });
+
+  it("rejects invalid stall thresholds", () => {
+    for (const threshold of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      expect(() => isStalled(EMPTY_PROGRESS_TRACKER, threshold)).toThrow("positive safe integer");
+    }
+  });
 });

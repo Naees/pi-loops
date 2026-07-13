@@ -121,6 +121,29 @@ describe("Pi extension registration", () => {
     expect(appendEntry).toHaveBeenCalledWith("pi-loops.run", expect.objectContaining({ state: "cancelled" }));
   });
 
+  it("deletes a stopped goal run through the confirmed public command", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx, notifications } = await context();
+    ctx.ui.confirm = vi.fn(async () => true);
+    const { api, registerCommand, registerTool } = mockApi();
+    piLoopsExtension(api);
+    const command = registerCommand.mock.calls[0]?.[1] as { handler(args: string, context: ExtensionContext): Promise<void> };
+    const tool = registerTool.mock.calls[0]?.[0] as {
+      execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal, onUpdate: undefined, context: ExtensionContext): Promise<{ content: { text: string }[]; details: Record<string, unknown> }>;
+    };
+
+    const started = await tool.execute("start", { action: "goal", goal: "delete after stopping" }, new AbortController().signal, undefined, ctx);
+    const runId = started.details.runId as string;
+    await tool.execute("stop", { action: "stop", runId }, new AbortController().signal, undefined, ctx);
+    await command.handler(`delete ${runId}`, ctx);
+    expect(notifications.at(-1)?.message).toBe(`Deleted Pi Loops runtime data for ${runId}.`);
+    const status = await tool.execute("status", { action: "status" }, new AbortController().signal, undefined, ctx);
+    expect(status.content[0]?.text).not.toContain(runId);
+
+    await command.handler(`delete ${runId}`, ctx);
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "error", message: `Run not found: ${runId}` }));
+  });
+
   it("validates, confirms, and persists schedules through the model-facing tool", async () => {
     delete process.env.PI_LOOPS_CHILD;
     const { ctx } = await context();

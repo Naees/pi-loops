@@ -36,6 +36,19 @@ describe("production RPC worker client", () => {
     await expect(firstStop).resolves.toEqual(expect.objectContaining({ code: 0 }));
   });
 
+  it("rejects invalid commands and maps failed RPC responses", async () => {
+    const rpc = client(`let buffer = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", chunk => { buffer += chunk; let newline; while ((newline = buffer.indexOf("\\n")) !== -1) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); if (!line) continue; const command = JSON.parse(line); console.log(JSON.stringify({ type: "response", id: command.id, command: command.type, success: false, error: "request denied" })); } });`);
+    await expect(rpc.request({})).rejects.toThrow("requires a type");
+    await expect(rpc.request({ type: "get_state" })).rejects.toThrow("request denied");
+    await expect(rpc.stop()).resolves.toEqual(expect.objectContaining({ code: 0 }));
+  });
+
+  it("rejects pending work when the child exits unexpectedly", async () => {
+    const rpc = client(`process.stdin.once("data", () => process.exit(7));`);
+    await expect(rpc.request({ type: "get_state" })).rejects.toThrow('exited unexpectedly: {"code":7,"signal":null}');
+    await expect(rpc.stop()).resolves.toEqual({ code: 7, signal: null });
+  });
+
   it("rejects response command mismatches", async () => {
     const rpc = client(`process.stdin.once("data", chunk => { const command = JSON.parse(chunk.toString()); console.log(JSON.stringify({ type: "response", id: command.id, command: "wrong", success: true })); }); setInterval(() => {}, 1000);`);
     try {
@@ -129,12 +142,23 @@ describe("production RPC worker client", () => {
     }
   });
 
-  it("rejects malformed or oversized protocol lines", async () => {
+  it("rejects malformed, invalid, or oversized protocol lines", async () => {
     const malformed = client(`console.log("not-json"); setInterval(() => {}, 1000);`);
     try {
       await expect(malformed.waitFor(() => false, { timeoutMs: 5_000 })).rejects.toThrow("Invalid JSON");
     } finally {
       await malformed.stop();
+    }
+
+    for (const envelope of [null, [], {}, { type: "" }]) {
+      const invalid = client(`console.log(process.env.PI_LOOPS_TEST_ENVELOPE); setInterval(() => {}, 1000);`, {
+        environment: { ...process.env, PI_LOOPS_TEST_ENVELOPE: JSON.stringify(envelope) },
+      });
+      try {
+        await expect(invalid.waitFor(() => false, { timeoutMs: 5_000 })).rejects.toThrow("invalid envelope");
+      } finally {
+        await invalid.stop();
+      }
     }
 
     const oversized = client(`console.log(JSON.stringify({ type: "event", text: "x".repeat(2048) })); setInterval(() => {}, 1000);`, { maxLineBytes: 1024 });

@@ -50,7 +50,9 @@ describe("filesystem triggers", () => {
     await symlink(outside, join(projectRoot, "outside-link"), "dir");
     await expect(resolveFilesystemTarget(projectRoot, "outside-link")).rejects.toThrow("escapes its project");
     await expect(resolveFilesystemTarget(projectRoot, ".git")).rejects.toThrow("cannot watch Git metadata");
-    await expect(resolveFilesystemTarget(projectRoot, "\0bad")).rejects.toThrow("invalid");
+    for (const invalid of ["", "@", "\0bad", "x".repeat(16 * 1024 + 1)]) {
+      await expect(resolveFilesystemTarget(projectRoot, invalid)).rejects.toThrow("invalid");
+    }
   });
 
   it("debounces a filesystem event storm into one trigger", async () => {

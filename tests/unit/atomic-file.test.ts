@@ -26,6 +26,26 @@ describe("atomic JSON files", () => {
     }
   });
 
+  it("applies byte ceilings to the exact formatted payload without replacing the primary file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-loops-atomic-bounded-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "record.json");
+    const original = { schemaVersion: 1, value: "original" };
+    await writeJsonAtomic(path, original);
+    const replacement = { schemaVersion: 1, values: Array.from({ length: 5 }, () => "界") };
+    const serialized = `${JSON.stringify(replacement, null, 2)}\n`;
+    const exactBytes = Buffer.byteLength(serialized, "utf8");
+
+    await expect(writeJsonAtomic(path, replacement, { maxBytes: exactBytes - 1, oversizedMessage: "too large" }))
+      .rejects.toThrow("too large");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(original);
+    await expect(writeJsonAtomic(path, undefined)).rejects.toThrow("not JSON-serializable");
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(original);
+    await expect(writeJsonAtomic(path, replacement, { maxBytes: exactBytes })).resolves.toBeUndefined();
+    expect(await readFile(path, "utf8")).toBe(serialized);
+    await expect(writeJsonAtomic(path, replacement, { maxBytes: Number.NaN })).rejects.toThrow("non-negative safe integer");
+  });
+
   it("preserves the primary JSON when a subprocess is interrupted mid-replacement", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-loops-atomic-interrupt-"));
     temporaryDirectories.push(directory);

@@ -49,6 +49,8 @@ describe("Phase 4 security policy", () => {
     expect(() => validateAuditReport(audit({ high: 1, total: 1 }))).toThrow("1 high and 0 critical");
     expect(() => validateAuditReport(audit({ critical: 1, total: 1 }))).toThrow("0 high and 1 critical");
     expect(() => validateAuditReport({ metadata: { vulnerabilities: { high: "0" } } })).toThrow("invalid info count");
+    expect(() => validateAuditReport(audit({ moderate: -1 }))).toThrow("invalid moderate count");
+    expect(() => validateAuditReport(audit({ total: 1.5 }))).toThrow("invalid total count");
   });
 
   it("accepts reviewed SPDX licenses and rejects missing, unreviewed, or malformed components", () => {
@@ -60,6 +62,14 @@ describe("Phase 4 security policy", () => {
       .toThrow("no declared SPDX license");
     expect(() => validateCycloneDxSbom({ ...sbom(), components: [{ ...sbom().components[0], purl: "git+https://example.test/repo" }] }))
       .toThrow("invalid production dependency component");
+    expect(() => validateCycloneDxSbom({ ...sbom(), components: [{ ...sbom().components[0], licenses: [{ license: { name: "MIT" } }] }] }))
+      .toThrow("no declared SPDX license");
+
+    const second = { ...sbom("ISC").components[0], name: "alpha", licenses: [{ license: { id: "MIT" } }, { license: { id: "ISC" } }] };
+    expect(validateCycloneDxSbom({ ...sbom(), components: [sbom().components[0], second] })).toEqual([
+      { name: "alpha", version: "1.2.3", licenses: ["ISC", "MIT"] },
+      { name: "dependency", version: "1.2.3", licenses: ["MIT"] },
+    ]);
   });
 
   it("requires external GitHub Actions to use immutable commit SHAs", () => {
@@ -84,15 +94,21 @@ describe("Phase 4 security policy", () => {
 
   it("reports high-confidence secrets without logging their values", () => {
     const githubToken = ["ghp", "A".repeat(36)].join("_");
+    const fineGrainedToken = ["github", "pat", "A".repeat(25), "B".repeat(25)].join("_");
     const npmToken = ["npm", "b".repeat(36)].join("_");
+    const awsKey = `AKIA${"C".repeat(16)}`;
     expect(findPotentialSecrets([
       { path: "safe.txt", text: "ordinary text" },
       { path: "github.txt", text: githubToken },
+      { path: "github-fine.txt", text: fineGrainedToken },
       { path: "npm.txt", text: npmToken },
+      { path: "aws.txt", text: awsKey },
       { path: "key.pem", text: ["-----BEGIN", "PRIVATE KEY-----"].join(" ") },
     ])).toEqual([
       { path: "github.txt", kind: "GitHub token" },
+      { path: "github-fine.txt", kind: "GitHub fine-grained token" },
       { path: "npm.txt", kind: "npm access token" },
+      { path: "aws.txt", kind: "AWS access key" },
       { path: "key.pem", kind: "PEM private key" },
     ]);
   });

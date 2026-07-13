@@ -138,7 +138,15 @@ describe("current Pi executable resolution", () => {
     })).rejects.toThrow("controlled failure");
   });
 
-  it("enforces the real version-probe timeout", async () => {
+  it("enforces valid bounded version-probe timeouts", async () => {
+    for (const versionProbeTimeoutMs of [0, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(resolveCurrentPiLaunchCommand({
+        execPath: process.execPath,
+        argv: [process.execPath, "/tmp/pi-coding-agent/dist/cli.js"],
+        versionProbeTimeoutMs,
+      })).rejects.toThrow("positive safe integer");
+    }
+
     const root = await temporaryRoot();
     const cli = await createNodeCli(root, "1.0.0", "setInterval(() => {}, 1000);\n");
 
