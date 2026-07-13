@@ -54,6 +54,9 @@
     "spike:rpc": "node scripts/spike-rpc-worker.ts",
     "spike:rpc:lifecycle": "node scripts/spike-rpc-lifecycle.ts",
     "test:rpc:lifecycle:production": "node scripts/spike-rpc-lifecycle.ts",
+    "security:check": "node scripts/security-check.mjs",
+    "release:candidate": "node scripts/release-candidate.mjs",
+    "release:candidate:runtime": "node scripts/release-candidate.mjs --runtime",
     "spike:watchdog": "node scripts/spike-child-watchdog.mjs",
     "spike:evaluator": "node scripts/spike-evaluator.mjs",
     "release:check": "node scripts/release-check.mjs"

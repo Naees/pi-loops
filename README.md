@@ -1,6 +1,6 @@
 # Pi Loops
 
-> **Status: attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6; no public npm release exists yet.**
+> **Status: attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6; Phase 4 production hardening is in progress and no public npm release exists yet.**
 
 Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
@@ -48,8 +48,8 @@ Goal loops run in the attended Pi session and current checkout. Scheduled and pr
 Pi Loops is delivered in phases:
 
 1. **Turn-based verification and attended goal loops — implemented:** bounded cycles, deterministic evidence, fresh evaluation, status, stop, interruption, and resume.
-2. **Scheduled loops:** trigger bounded goals at a time or interval while Pi is running (validated on macOS with Pi 0.80.6).
-3. **Proactive loops:** trigger confirmed bounded goals from project filesystem changes, other Pi extensions, or the model-facing tool while Pi is running.
+2. **Scheduled loops — implemented:** trigger bounded goals at a time or interval while Pi is running (validated on macOS with Pi 0.80.6).
+3. **Proactive loops — implemented:** trigger confirmed bounded goals from project filesystem changes, other Pi extensions, or the model-facing tool while Pi is running (validated on macOS with Pi 0.80.6).
 
 ## Completion model
 
@@ -201,7 +201,7 @@ No project configuration file will be created automatically.
 - Evaluator integration.
 - Packed-package clean-install testing.
 
-### Phase 1 — Goal loops (implemented, undergoing hardening)
+### Phase 1 — Goal loops (implemented)
 
 - Natural-language and `/loops goal` entry points.
 - Status, stop, interruption recovery, and resume.
@@ -222,7 +222,7 @@ No project configuration file will be created automatically.
 - Model-facing firing of confirmed trigger definitions.
 - Debounce, coalescing, restart, and trigger-storm protection.
 
-### Phase 4 — Production hardening
+### Phase 4 — Production hardening (in progress)
 
 - State migrations and compatibility hardening.
 - Comprehensive security audit.
@@ -244,7 +244,7 @@ Code will be reviewed and refactored between every phase rather than postponing 
 
 Pi packages execute with the user's system permissions. Review package source before installation.
 
-The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Scheduled and proactive child launch is enabled only on the validated macOS/Pi 0.80.6 combination; other platforms remain fail-closed pending equivalent lifecycle evidence.
+The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Phase 4 adds automated production-dependency auditing, SPDX license review, CycloneDX SBOM validation, high-confidence tracked-secret scanning, static analysis, and non-publishing release-candidate artifacts. Scheduled and proactive child launch is enabled only on the validated macOS/Pi 0.80.6 combination; other platforms remain fail-closed pending equivalent lifecycle evidence.
 
 Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. A comprehensive vulnerability and supply-chain assessment remains required before release.
 
@@ -252,7 +252,7 @@ Report security issues through the private process documented in [`SECURITY.md`]
 
 ## Project status
 
-The product contract and architecture are approved. Attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6. Final production hardening and Linux/Windows qualification remain incomplete; no public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6. Phase 4 production hardening is in progress; Linux/Windows qualification remains Phase 5 work. No public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 
