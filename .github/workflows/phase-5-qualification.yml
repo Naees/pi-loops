@@ -55,6 +55,14 @@ jobs:
           node-version: 22.19.0
           cache: npm
       - run: npm ci
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $target = Start-Process "$env:SystemRoot\System32\ping.exe" -ArgumentList '-t','127.0.0.1' -PassThru
+          $deadline = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 3000
+          & "$env:ProgramFiles\PowerShell\7\pwsh.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./src/worker/windows-job-sentinel.ps1 -TargetProcessId $target.Id -AbsoluteDeadlineMs $deadline -StatusPath "$env:RUNNER_TEMP\pi-loops-sentinel-smoke.json"
+          if (-not $target.HasExited) { Stop-Process -Id $target.Id -Force; throw 'Job sentinel did not terminate its target' }
+          Get-Content "$env:RUNNER_TEMP\pi-loops-sentinel-smoke.json"
       - run: git --version
       - run: node --version
       - run: node node_modules/@earendil-works/pi-coding-agent/dist/cli.js --version
