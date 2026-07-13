@@ -47,6 +47,24 @@ describe("child watchdog", () => {
     expect(context.shutdown).toHaveBeenCalledOnce();
   });
 
+  it("forces the Windows process tree while the child still exists", async () => {
+    const { pi, handlers, context } = harness();
+    const terminateSelf = vi.fn();
+    registerWorkerWatchdog(pi, {
+      environment: {},
+      now: () => 1000,
+      terminateSelf,
+      gracefulShutdownMs: 100,
+      platform: "win32",
+    });
+
+    await handlers.get("session_start")?.({}, context);
+
+    expect(context.abort).toHaveBeenCalledOnce();
+    expect(context.shutdown).toHaveBeenCalledOnce();
+    expect(terminateSelf).toHaveBeenCalledOnce();
+  });
+
   it("aborts and shuts down when the deadline expires", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1000);

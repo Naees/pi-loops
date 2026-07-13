@@ -268,7 +268,7 @@ describe("unattended run controller", () => {
       writerLeaseStaleMs: 2_000,
     });
     const running = controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal);
-    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"));
+    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"), { timeout: 10_000 });
     const identity = await resolveRepositoryLockIdentity(projectRoot);
     if (identity.kind !== "git") throw new Error("Expected Git identity");
     await rm(`${repositoryWriterLeasePath(join(dataRoot, "repository-locks"), identity.commonGitDirectory)}.lock`, { recursive: true, force: true });

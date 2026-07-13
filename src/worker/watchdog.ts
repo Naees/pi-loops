@@ -9,6 +9,7 @@ export interface WorkerWatchdogOptions {
   readonly now?: () => number;
   readonly terminateSelf?: () => void;
   readonly gracefulShutdownMs?: number;
+  readonly platform?: NodeJS.Platform;
 }
 
 export function parseChildDeadline(value: string | undefined, nowMs: number = Date.now()): number | undefined {
@@ -27,6 +28,7 @@ export function registerWorkerWatchdog(pi: ExtensionAPI, options: WorkerWatchdog
     });
   });
   const gracefulShutdownMs = options.gracefulShutdownMs ?? 1_000;
+  const platform = options.platform ?? process.platform;
   if (!Number.isSafeInteger(gracefulShutdownMs) || gracefulShutdownMs < 0) {
     throw new Error("gracefulShutdownMs must be a non-negative safe integer");
   }
@@ -38,7 +40,14 @@ export function registerWorkerWatchdog(pi: ExtensionAPI, options: WorkerWatchdog
     ctx.ui.notify(message, "warning");
     ctx.abort();
     ctx.shutdown();
-    setTimeout(terminateSelf, gracefulShutdownMs);
+    // A Windows process can exit before a delayed taskkill snapshots its child
+    // tree, leaving reparented descendants behind. Start the forced tree
+    // termination while the Pi process is still known to exist.
+    if (platform === "win32") {
+      terminateSelf();
+    } else {
+      setTimeout(terminateSelf, gracefulShutdownMs);
+    }
   };
 
   pi.on("session_start", async (_event, ctx) => {

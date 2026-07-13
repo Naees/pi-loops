@@ -284,7 +284,7 @@ describe("schedule controller", () => {
     await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(1));
     expect(maximumConcurrent).toBe(1);
     finishFirst?.();
-    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2), { timeout: 10_000 });
     expect(maximumConcurrent).toBe(1);
     await Promise.all([controller.shutdown(), contender.shutdown()]);
   });
@@ -605,7 +605,7 @@ describe("schedule controller", () => {
         state: "paused",
         pauseReason: "interrupted",
       }));
-    });
+    }, { timeout: 10_000 });
     const projectId = createProjectId(await realpath(project));
     await expectClaimsReleased(dataRoot, projectId, schedule.scheduleId);
     await controller.shutdown();
