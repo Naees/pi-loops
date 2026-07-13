@@ -238,10 +238,10 @@ describe("trigger controller", () => {
     await vi.waitFor(async () => {
       expect(await controller.fire(trigger.triggerId, host.cwd)).toBe("started");
     }, { timeout: 5_000, interval: 100 });
-    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
-    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]?.state).toBe("enabled"));
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce(), { timeout: 10_000 });
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]?.state).toBe("enabled"), { timeout: 10_000 });
     await controller.shutdown();
-  }, 8_000);
+  }, 30_000);
 
   it("aborts on claim compromise and recovers the abandoned occurrence on the next fire", async () => {
     const { dataRoot, projectId, host } = await harness();

@@ -432,11 +432,11 @@ async function runParentScenario(
     ]);
   } finally {
     if (helper.exitCode === null && helper.signalCode === null) helper.kill("SIGKILL");
+    const sentinelStatus = await readFile(sentinelStatusFile, "utf8").catch((statusError: NodeJS.ErrnoException) =>
+      `unavailable:${statusError.code ?? statusError.message}`);
     try {
       await removeTemporaryRoot(root);
     } catch (error) {
-      const sentinelStatus = await readFile(sentinelStatusFile, "utf8").catch((statusError: NodeJS.ErrnoException) =>
-        `unavailable:${statusError.code ?? statusError.message}`);
       throw new Error(`Lifecycle cleanup failed; sentinel=${sentinelStatus}`, { cause: error });
     }
   }
