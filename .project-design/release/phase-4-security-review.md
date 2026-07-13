@@ -111,7 +111,7 @@ Controls verified:
 | P4-SEC-002 | Medium | GitHub Actions used mutable major-version references, allowing tag movement to change release automation without repository review. | Fixed. Every external action is pinned to the exact tested commit SHA, and `security:check` enforces immutable refs. |
 | P4-SEC-003 | Medium | A malformed-response test interpolated serialized fixture data into `node -e` source, triggering CodeQL improper-sanitization analysis. | Fixed. Fixture envelopes cross through a dedicated data value; hosted CodeQL revalidation closed the alert. |
 | P4-REL-001 | Medium availability | The npm 11-generated lockfile omitted optional metadata required by npm 10 clean installation. | Fixed. Lockfile regenerated with npm 10.9.3; clean npm 10/current installs and hosted Node 22.19/24 CI pass. |
-| P4-REL-002 | Medium release integrity | The first downloaded release-candidate checksum named `artifacts/<tarball>`, but artifact download places files at the artifact root, so `shasum -c` could not locate the tarball. | Fixed. Checksums are generated and verified inside the artifact directory. Regenerated hosted artifact `29236169822` verified successfully after download. |
+| P4-REL-002 | Medium release integrity | The first downloaded release-candidate checksum named `artifacts/<tarball>`, but artifact download places files at the artifact root, so `shasum -c` could not locate the tarball. | Fixed. Checksums are generated and verified inside the artifact directory. Regenerated hosted artifacts verified successfully after download; final run `29236771626` covers the Phase 4 closure commit. |
 
 No critical/high finding is open.
 

@@ -56,17 +56,17 @@
 
 ### Hosted validation
 
-Commit `a154c4e`:
+Source/workflow commit `a154c4e` and Phase 4 closure commit `9a2694f`:
 
-- CI run `29235967532`: Node 22.19.0 and Node 24.x clean installs/tests/security checks passed; packed install/state/scheduled jobs passed; SBOM, inventory, checksum, and package artifact uploaded.
+- CI run `29235967532`: Node 22.19.0 and Node 24.x clean installs/tests/security checks passed; packed install/state/scheduled/proactive jobs passed; SBOM, inventory, checksum, and package artifact uploaded.
 - Security run `29235967504`: pinned CodeQL v4 passed; zero open code-scanning alerts. Dependency review was correctly skipped for a push event.
-- Manual release-candidate run `29236169822`: complete non-publishing baseline and artifact build passed.
+- Manual release-candidate run `29236771626` at `9a2694f`: complete non-publishing baseline and final public-documentation artifact build passed.
 
 Downloaded artifact evidence:
 
 - `naees-pi-loops-0.1.0.tgz`
-- 67 files; 80,139 packed bytes.
-- SHA-256 `996f803f1b97b6f02757a19f0b4f6f6b11140ef7eada62ae31bdf550851376f8`.
+- 67 files; 80,167 packed bytes; 336,427 unpacked bytes.
+- SHA-256 `c3c4f5c60ac25c402a44f4e4e86cc90b4da4c734f84ab76f33f229513e082025`.
 - CycloneDX 1.5 SBOM with four production dependency components.
 - `shasum -a 256 -c SHA256SUMS` passed after artifact download.
 
