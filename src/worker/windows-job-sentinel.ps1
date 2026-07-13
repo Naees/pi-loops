@@ -84,6 +84,7 @@ function Write-Status([string]$Phase, [string]$Detail = "") {
 $job = [IntPtr]::Zero
 $target = [IntPtr]::Zero
 $infoPointer = [IntPtr]::Zero
+Write-Status "starting"
 try {
   Add-Type -TypeDefinition $nativeSource
   $job = [PiLoopsJobObject]::CreateJobObject([IntPtr]::Zero, $null)

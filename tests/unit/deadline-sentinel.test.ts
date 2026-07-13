@@ -47,8 +47,9 @@ describe("Windows deadline sentinel", () => {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp" },
+      env: expect.objectContaining({ SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", Path: expect.any(String) }),
     }));
+    expect((calls[0]?.[2] as { env: NodeJS.ProcessEnv }).env.SECRET_VALUE).toBeUndefined();
     expect(childUnref).toHaveBeenCalledOnce();
     expect(stdoutUnref).toHaveBeenCalledOnce();
     expect(stderrUnref).toHaveBeenCalledOnce();
