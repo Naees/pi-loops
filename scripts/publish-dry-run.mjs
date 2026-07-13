@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+
+import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { findForbiddenPackagePaths } from "./package-boundary.mjs";
+
+const manifest = JSON.parse(await readFile("package.json", "utf8"));
+if (manifest.name !== "@naees/pi-loops" || typeof manifest.version !== "string") {
+  throw new Error("Release manifest identity is invalid");
+}
+if (manifest.publishConfig?.access !== "public" || manifest.publishConfig?.provenance !== true) {
+  throw new Error("Release manifest must require public access and npm provenance");
+}
+
+const result = spawnSync("npm", ["publish", "--dry-run", "--json", "--access", "public"], {
+  encoding: "utf8",
+  shell: false,
+  maxBuffer: 8 * 1024 * 1024,
+});
+if (result.error) throw result.error;
+if (result.status !== 0) {
+  throw new Error(`npm publish --dry-run failed\n${result.stderr || result.stdout}`);
+}
+let report;
+try {
+  report = JSON.parse(result.stdout);
+} catch (error) {
+  throw new Error("npm publish --dry-run returned invalid JSON", { cause: error });
+}
+if (report.name !== manifest.name || report.version !== manifest.version || report.id !== `${manifest.name}@${manifest.version}` ||
+  !Array.isArray(report.files) || !Array.isArray(report.bundled)) {
+  throw new Error("npm publish --dry-run returned an invalid package report");
+}
+const forbidden = findForbiddenPackagePaths(report.files);
+if (forbidden.length > 0) throw new Error(`Publish dry-run contains forbidden files: ${forbidden.join(", ")}`);
+const paths = report.files.map((file) => file.path);
+for (const required of ["docs/integrations.md", "docs/operations.md", "skills/pi-loops/SKILL.md", "src/extension/index.ts"]) {
+  if (!paths.includes(required)) throw new Error(`Publish dry-run is missing required file: ${required}`);
+}
+if (report.bundled.length > 0) throw new Error(`Publish dry-run unexpectedly bundles dependencies: ${report.bundled.join(", ")}`);
+
+console.log(`Publish dry-run passed: ${report.id}; ${report.entryCount} files; ${report.size} packed bytes; public access with provenance required. No package was published.`);

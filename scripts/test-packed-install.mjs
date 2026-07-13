@@ -88,10 +88,15 @@ try {
   const packageRoot = join(installRoot, "node_modules", "@naees", "pi-loops");
   const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
   if (manifest.name !== "@naees/pi-loops") throw new Error("Installed package identity is incorrect");
+  if (manifest.publishConfig?.access !== "public" || manifest.publishConfig?.provenance !== true) {
+    throw new Error("Installed package does not preserve public provenance publishing policy");
+  }
   if (!Array.isArray(manifest.pi?.skills) || !manifest.pi.skills.includes("./skills")) {
     throw new Error("Installed package does not expose the pi-loops skill");
   }
   await readFile(join(packageRoot, "skills", "pi-loops", "SKILL.md"), "utf8");
+  await readFile(join(packageRoot, "docs", "operations.md"), "utf8");
+  await readFile(join(packageRoot, "docs", "integrations.md"), "utf8");
 
   const extensionPath = join(packageRoot, "src", "extension", "index.ts");
   const piExecutable = process.env.PI_LOOPS_TEST_PI ?? "pi";

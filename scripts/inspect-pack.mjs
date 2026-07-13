@@ -25,5 +25,13 @@ const forbidden = findForbiddenPackagePaths(paths);
 if (forbidden.length > 0) {
   throw new Error(`Forbidden npm package files:\n${forbidden.join("\n")}`);
 }
+for (const required of [
+  "docs/integrations.md",
+  "docs/operations.md",
+  "skills/pi-loops/SKILL.md",
+  "src/extension/index.ts",
+]) {
+  if (!paths.includes(required)) throw new Error(`Required npm package file is missing: ${required}`);
+}
 
 console.log(`Package inspection passed: ${paths.length} files, ${report.unpackedSize} bytes unpacked.`);

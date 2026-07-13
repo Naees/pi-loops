@@ -22,6 +22,7 @@ const required = [
   ["npm", ["run", "test:packed"]],
   ["npm", ["run", "test:packed:state"]],
   ["npm", ["run", "test:e2e:scheduled:packed"]],
+  ["npm", ["run", "release:dry-run"]],
 ];
 for (const [command, commandArgs] of required) run(command, commandArgs);
 

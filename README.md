@@ -25,6 +25,12 @@ Once published, it will require an existing working Pi installation with:
 
 No Pi Loops configuration will be required for normal use.
 
+Operational and integration references:
+
+- [Operations, recovery, data, review branches, upgrades, and troubleshooting](docs/operations.md)
+- [Strict extension event integration contract](docs/integrations.md)
+- [Security policy and private reporting](SECURITY.md)
+
 ## Attended goal usage
 
 ### Natural language

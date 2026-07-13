@@ -25,6 +25,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Phase 4 supply-chain checks for production advisories, reviewed SPDX licenses, CycloneDX SBOM validation, and high-confidence tracked-secret patterns.
 - Non-publishing macOS release-candidate automation, minimum/current Node CI, CodeQL analysis, dependency review, package artifacts, and checksums.
 - Explicit sequential stored-state migration infrastructure, frozen version-one compatibility fixtures, and packed upgrade/uninstall/reinstall validation.
+- Packaged operations and strict integration documentation, public/provenance publish metadata, checksummed package inventories, and a non-publishing npm publication dry-run gate.
 
 ### Changed
 

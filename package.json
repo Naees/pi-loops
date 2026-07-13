@@ -26,11 +26,16 @@
   "files": [
     "src/",
     "skills/",
+    "docs/",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
     "SECURITY.md"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "extensions": [
       "./src/extension/index.ts"
@@ -58,6 +63,7 @@
     "security:check": "node scripts/security-check.mjs",
     "release:candidate": "node scripts/release-candidate.mjs",
     "release:candidate:runtime": "node scripts/release-candidate.mjs --runtime",
+    "release:dry-run": "node scripts/publish-dry-run.mjs",
     "spike:watchdog": "node scripts/spike-child-watchdog.mjs",
     "spike:evaluator": "node scripts/spike-evaluator.mjs",
     "release:check": "node scripts/release-check.mjs"

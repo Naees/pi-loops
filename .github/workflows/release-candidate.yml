@@ -23,7 +23,7 @@ jobs:
       - run: npm run release:candidate
       - run: mkdir -p artifacts
       - run: node scripts/security-check.mjs --sbom artifacts/pi-loops.cdx.json
-      - run: npm pack --pack-destination artifacts
+      - run: npm pack --json --pack-destination artifacts > artifacts/npm-pack.json
       - run: shasum -a 256 artifacts/*.tgz > artifacts/SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

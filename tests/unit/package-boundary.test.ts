@@ -7,6 +7,7 @@ describe("package boundary", () => {
     const manifest = JSON.parse(await readFile("package.json", "utf8")) as {
       files?: string[];
       pi?: { extensions?: string[]; skills?: string[] };
+      publishConfig?: { access?: string; provenance?: boolean };
       engines?: { node?: string };
       peerDependencies?: Record<string, string>;
       dependencies?: Record<string, string>;
@@ -18,8 +19,10 @@ describe("package boundary", () => {
     expect(manifest.files).not.toContain(".project-design/");
     expect(manifest.files).not.toContain("tests/");
     expect(manifest.files).toContain("skills/");
+    expect(manifest.files).toContain("docs/");
     expect(manifest.pi).toEqual({ extensions: ["./src/extension/index.ts"], skills: ["./skills"] });
     expect(manifest.engines?.node).toBe(">=22.19.0");
+    expect(manifest.publishConfig).toEqual({ access: "public", provenance: true });
     expect(manifest.peerDependencies).toEqual(expect.objectContaining({
       "@earendil-works/pi-ai": "*",
       "@earendil-works/pi-coding-agent": "*",

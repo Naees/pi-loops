@@ -124,6 +124,15 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - The complete authenticated local release-candidate gate passed with 59 test files / 352 tests, 93.32% line coverage, 84.12% branch coverage, and forced parent death 10/10.
 - Hosted Node 22.19/24 CI, packed package/state jobs, current-major immutable Actions, and CodeQL passed at `db0cdc5` with zero open alerts. No critical/high finding remains; delivery slice 4 is closed.
 
+### 2026-07-13 — public operations and release-candidate documentation
+
+- Added packaged public operations/recovery/data/upgrade/troubleshooting documentation and a strict extension event integration contract. README links both references.
+- Added explicit public-access and npm-provenance publish metadata; package and packed-install gates require the documents and metadata.
+- CI/release-candidate artifacts now include npm's JSON file inventory, CycloneDX SBOM, tarball, and SHA-256 checksum.
+- Added `release:dry-run`, which validates the exact npm publication report, forbidden/required files, public identity, provenance policy, and absence of bundled dependencies without publishing.
+- The publication dry-run passed. Live `npm whoami` now returns `E401`, so publisher authentication must be restored explicitly before final publication; Pi Loops does not inspect or modify npm credentials.
+- Local release-candidate and hosted artifact revalidation remain required before delivery slice 5 and Phase 4 can close.
+
 ## Initial disposition
 
 The pre-Phase 4 baseline is green at commit `f033d06`: 55 test files / 336 tests, 93.01% line coverage, packed install and package inspection passing, authenticated attended and proactive E2E passing, production RPC lifecycle passing with forced parent death 10/10, and zero audited vulnerabilities. Phase 4 begins with the release/supply-chain baseline; this record does not declare Phase 4 complete.
