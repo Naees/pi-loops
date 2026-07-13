@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,20 @@ afterEach(async () => {
 });
 
 describe("persistent notices", () => {
+  it("rejects malformed, unknown, and oversized notice state", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-loops-notices-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "notices.json");
+    const notices = new NoticeStore(directory);
+
+    await writeFile(path, "not-json");
+    await expect(notices.shouldShowSubagentsRecommendation()).rejects.toBeInstanceOf(SyntaxError);
+    await writeFile(path, JSON.stringify({ schemaVersion: 1, subagentsRecommended: true, hostile: true }));
+    await expect(notices.shouldShowSubagentsRecommendation()).rejects.toThrow("notice record is invalid");
+    await writeFile(path, Buffer.alloc(16 * 1024 + 1));
+    await expect(notices.shouldShowSubagentsRecommendation()).rejects.toThrow("notice record is oversized");
+  });
+
   it("shows the subagent recommendation only until it is recorded", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-loops-notices-"));
     temporaryDirectories.push(directory);

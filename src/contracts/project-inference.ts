@@ -1,7 +1,9 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
+import { readBoundedJsonFile } from "../storage/json-record-files.js";
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
+const OVERSIZED_MANIFEST = `Project package manifest exceeds ${MAX_MANIFEST_BYTES} bytes`;
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -16,15 +18,14 @@ async function exists(path: string): Promise<boolean> {
 async function packageScripts(projectRoot: string): Promise<Record<string, string>> {
   const path = join(projectRoot, "package.json");
   try {
-    const metadata = await stat(path);
-    if (metadata.size > MAX_MANIFEST_BYTES) return {};
-    const value = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const value = await readBoundedJsonFile(path, MAX_MANIFEST_BYTES, OVERSIZED_MANIFEST);
     if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
     const scripts = (value as Record<string, unknown>).scripts;
     if (typeof scripts !== "object" || scripts === null || Array.isArray(scripts)) return {};
     return Object.fromEntries(Object.entries(scripts).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return {};
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError ||
+      (error instanceof Error && error.message === OVERSIZED_MANIFEST)) return {};
     throw error;
   }
 }

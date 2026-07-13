@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { lock } from "proper-lockfile";
 import { writeJsonAtomic } from "./atomic-file.js";
+import { readBoundedJsonFile } from "./json-record-files.js";
 
 export interface WriterLeaseRecord {
   readonly schemaVersion: 1;
@@ -62,12 +63,8 @@ function parseLease(value: unknown): WriterLeaseRecord {
 }
 
 async function readLease(path: string): Promise<WriterLeaseRecord | undefined> {
-  try {
-    return parseLease(JSON.parse(await readFile(path, "utf8")) as unknown);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
+  const value = await readBoundedJsonFile(path, 16 * 1024, "Invalid writer lease record");
+  return value === undefined ? undefined : parseLease(value);
 }
 
 export async function acquireWriterLease(

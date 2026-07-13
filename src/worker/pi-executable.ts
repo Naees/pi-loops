@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, readFile, realpath, stat } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { basename, dirname, join, normalize } from "node:path";
 import { errorMessage } from "../shared/errors.js";
+import { readBoundedJsonFile } from "../storage/json-record-files.js";
 
 const VERSION_TIMEOUT_MS = 5_000;
 const MAX_VERSION_OUTPUT_BYTES = 16 * 1024;
@@ -108,11 +109,11 @@ async function canonicalCandidate(candidate: LaunchCandidate): Promise<LaunchCan
 
 async function validateNodeCliPackage(cliPath: string, version: string): Promise<void> {
   const manifestPath = join(dirname(cliPath), "..", "package.json");
-  const metadata = await stat(manifestPath);
-  if (metadata.size > MAX_PACKAGE_MANIFEST_BYTES) {
-    throw new Error(`Pi package manifest exceeds ${MAX_PACKAGE_MANIFEST_BYTES} bytes`);
-  }
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
+  const manifest = await readBoundedJsonFile(
+    manifestPath,
+    MAX_PACKAGE_MANIFEST_BYTES,
+    `Pi package manifest exceeds ${MAX_PACKAGE_MANIFEST_BYTES} bytes`,
+  );
   if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
     throw new Error("Pi package manifest must be an object");
   }

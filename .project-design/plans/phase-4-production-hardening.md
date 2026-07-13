@@ -115,6 +115,14 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Documented the evaluator aggregate ceiling, protected-record retention tradeoff, absence of a provider monetary cap, and exact public operational limits in `README.md`.
 - No critical/high bound defect remains in the validated macOS scope. Delivery slice 3 is closed; Linux and Windows calibration remains Phase 5 work.
 
+### 2026-07-13 — comprehensive security review first pass
+
+- Recorded assets, threat sources, parent/child/storage/Git/event/evaluator/update boundaries, controls, findings, and residual risks in `.project-design/release/phase-4-security-review.md`.
+- Found and fixed four remaining unbounded or growth-after-stat JSON file reads: notice state, lease metadata, project package inference, and current-Pi package identity now use the single-handle bounded reader.
+- Pinned every external GitHub Action to the exact previously tested commit SHA and added a policy test/security gate that rejects mutable workflow references.
+- Added malformed/oversized notice, oversized lease metadata, and oversized current-Pi manifest coverage; focused tests pass.
+- No critical/high finding is open locally. Hosted CI/CodeQL and the complete release-candidate matrix remain required before delivery slice 4 is closed.
+
 ## Initial disposition
 
 The pre-Phase 4 baseline is green at commit `f033d06`: 55 test files / 336 tests, 93.01% line coverage, packed install and package inspection passing, authenticated attended and proactive E2E passing, production RPC lifecycle passing with forced parent death 10/10, and zero audited vulnerabilities. Phase 4 begins with the release/supply-chain baseline; this record does not declare Phase 4 complete.

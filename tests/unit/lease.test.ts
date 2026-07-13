@@ -75,6 +75,15 @@ describe("writer leases", () => {
     await releaseWriterLease(nextLease);
   });
 
+  it("bounds lease metadata reads before parsing", async () => {
+    const path = await leasePath();
+    const lease = await acquireWriterLease(path, 5_000);
+    await writeFile(path, Buffer.alloc(16 * 1024 + 1));
+    await expect(assertWriterLease(lease)).rejects.toThrow("Invalid writer lease record");
+    await writeFile(path, JSON.stringify(lease.record));
+    await releaseWriterLease(lease);
+  });
+
   it("fails closed and signals compromise when lease metadata ownership changes", async () => {
     const path = await leasePath();
     const lease = await acquireWriterLease(path, 5_000);

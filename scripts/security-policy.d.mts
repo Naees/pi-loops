@@ -25,9 +25,16 @@ export interface SecretFinding {
   readonly kind: string;
 }
 
+export interface UnpinnedActionFinding {
+  readonly path: string;
+  readonly line: number;
+  readonly uses: string;
+}
+
 export function validateAuditReport(value: unknown): AuditCounts;
 export function validateCycloneDxSbom(
   value: unknown,
   approvedLicenses?: readonly string[],
 ): ProductionDependencyInventoryEntry[];
 export function findPotentialSecrets(entries: readonly SecretScanEntry[]): SecretFinding[];
+export function findUnpinnedGitHubActions(entries: readonly SecretScanEntry[]): UnpinnedActionFinding[];

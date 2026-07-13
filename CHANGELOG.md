@@ -32,12 +32,14 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Separated extension command parsing and presentation, centralized record-file I/O and error normalization, and isolated scheduled restart preparation from execution.
 - Generalized unattended execution so scheduled and proactive writers share worktree isolation, RPC lifecycle, finite budgets, repository guards, and review-branch finalization.
 - Bounded event ingress, error notifications, filesystem watcher admission, JSON record reads, and per-project trigger definitions; coordinated shutdown now attempts every safety cleanup before reporting failures.
+- Pinned every external GitHub Action to a tested immutable commit and made mutable workflow references fail the security policy.
 - Split extension hosts, routing, trigger-event relay, trigger ingress, and unattended definition/restart logic into focused internal modules; centralized repeated ID allocation, lease scoping, and record validation.
 
 ### Fixed
 
 - The lockfile now supports clean installation with the minimum Node 22.19 toolchain's npm 10 as well as current npm.
 - Malformed-response RPC tests now pass fixture envelopes as data rather than interpolating serialized values into child source code.
+- Notice, lease, project-manifest, and current-Pi manifest reads now enforce their byte ceilings through the single-handle bounded reader, closing growth-after-stat and unbounded-read paths.
 - Terminal attended runs now release their writer lease even if persistence, transcript, or notification callbacks fail.
 - Stored evaluator decisions now enforce the same semantic invariants as fresh evaluator responses.
 - An armed child-watchdog termination escalation is no longer disarmed during session shutdown.

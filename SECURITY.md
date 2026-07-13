@@ -14,7 +14,7 @@ Include reproduction steps, affected platforms, expected impact, and any suggest
 
 ## Automated checks
 
-Phase 4 security automation validates production dependency advisories, reviewed SPDX licenses, a CycloneDX production-dependency SBOM, high-confidence tracked-secret patterns, package contents, and static analysis. These automated checks supplement rather than replace manual review of process, filesystem, Git, event, evaluator, and deletion boundaries.
+Phase 4 security automation validates production dependency advisories, reviewed SPDX licenses, a CycloneDX production-dependency SBOM, high-confidence tracked-secret patterns, immutable GitHub Action references, package contents, and static analysis. These automated checks supplement rather than replace manual review of process, filesystem, Git, event, evaluator, and deletion boundaries.
 
 ## Release requirements
 

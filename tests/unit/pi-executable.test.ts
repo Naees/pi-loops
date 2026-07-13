@@ -96,6 +96,18 @@ describe("current Pi executable resolution", () => {
     })).rejects.toThrow("does not match executable version");
   });
 
+  it("bounds the current Pi package manifest read", async () => {
+    const root = await temporaryRoot();
+    const cli = await createNodeCli(root, "0.80.6");
+    await writeFile(join(cli, "..", "..", "package.json"), Buffer.alloc(256 * 1024 + 1));
+
+    await expect(resolveCurrentPiLaunchCommand({
+      execPath: process.execPath,
+      argv: [process.execPath, cli],
+      probeVersion: async () => "0.80.6",
+    })).rejects.toThrow("Pi package manifest exceeds 262144 bytes");
+  });
+
   it("runs the real version probe without shell interpolation", async () => {
     const root = await temporaryRoot();
     const unsafeRoot = join(root, "path with spaces; touch SHOULD_NOT_EXIST");

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findPotentialSecrets,
+  findUnpinnedGitHubActions,
   validateAuditReport,
   validateCycloneDxSbom,
 } from "../../scripts/security-policy.mjs";
@@ -59,6 +60,26 @@ describe("Phase 4 security policy", () => {
       .toThrow("no declared SPDX license");
     expect(() => validateCycloneDxSbom({ ...sbom(), components: [{ ...sbom().components[0], purl: "git+https://example.test/repo" }] }))
       .toThrow("invalid production dependency component");
+  });
+
+  it("requires external GitHub Actions to use immutable commit SHAs", () => {
+    expect(findUnpinnedGitHubActions([{
+      path: ".github/workflows/ci.yml",
+      text: [
+        "steps:",
+        "  - uses: actions/checkout@v4",
+        "  - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4",
+        "  - uses: ./local-action",
+        "  - uses: docker://alpine:3.20",
+      ].join("\n"),
+    }, {
+      path: "README.md",
+      text: "- uses: example/untrusted@main",
+    }])).toEqual([{
+      path: ".github/workflows/ci.yml",
+      line: 2,
+      uses: "actions/checkout@v4",
+    }]);
   });
 
   it("reports high-confidence secrets without logging their values", () => {

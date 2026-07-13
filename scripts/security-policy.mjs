@@ -71,3 +71,18 @@ export function findPotentialSecrets(entries) {
   }
   return findings;
 }
+
+export function findUnpinnedGitHubActions(entries) {
+  const findings = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry.path !== "string" || typeof entry.text !== "string" ||
+      !entry.path.startsWith(".github/workflows/")) continue;
+    for (const [index, line] of entry.text.split("\n").entries()) {
+      const match = line.match(/^\s*-\s+uses:\s+["']?([^\s"'#]+)["']?/);
+      const uses = match?.[1];
+      if (!uses || uses.startsWith("./") || uses.startsWith("docker://")) continue;
+      if (!/@[0-9a-f]{40}$/.test(uses)) findings.push({ path: entry.path, line: index + 1, uses });
+    }
+  }
+  return findings;
+}

@@ -5,6 +5,7 @@ import { lstat, mkdir, readFile, readlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import {
   findPotentialSecrets,
+  findUnpinnedGitHubActions,
   validateAuditReport,
   validateCycloneDxSbom,
 } from "./security-policy.mjs";
@@ -77,6 +78,10 @@ for (const path of filesResult.stdout.split("\0").filter(Boolean)) {
 const secrets = findPotentialSecrets(entries);
 if (secrets.length > 0) {
   throw new Error(`Potential committed secrets detected:\n${secrets.map(({ path, kind }) => `${path}: ${kind}`).join("\n")}`);
+}
+const unpinnedActions = findUnpinnedGitHubActions(entries);
+if (unpinnedActions.length > 0) {
+  throw new Error(`GitHub Actions must use immutable commit SHAs:\n${unpinnedActions.map(({ path, line, uses }) => `${path}:${line}: ${uses}`).join("\n")}`);
 }
 
 console.log(`Security checks passed: ${auditCounts.total} audited vulnerabilities; ${inventory.length} production dependencies; licenses ${[...new Set(inventory.flatMap((entry) => entry.licenses))].sort().join(", ")}; ${entries.length} files scanned${outputPath ? `; SBOM written to ${outputPath}` : ""}.`);
