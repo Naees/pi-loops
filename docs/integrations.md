@@ -24,7 +24,7 @@ Example:
 pi.events.emit("pi-loops:trigger", {
   schemaVersion: 1,
   triggerId: "trigger_a4f2c1d3",
-  eventId: "build-2026-07-13-42",
+  eventId: "build-42",
 });
 ```
 
@@ -68,6 +68,6 @@ External adapters should:
 3. Emit only the version-one payload above.
 4. Use a stable, non-secret `eventId` of at most 128 characters.
 5. Avoid embedding payload bodies, tokens, URLs with credentials, or personal data in `eventId`.
-6. Treat `started`, `coalesced`, and `ignored` outcomes as normal bounded-delivery states rather than assuming every event starts a new writer.
+6. Do not assume exactly-once delivery or that every event starts a new writer.
 
 Adapter credentials remain the responsibility of the adapter and Pi's normal environment/permission model. Pi Loops neither stores nor requests them.
