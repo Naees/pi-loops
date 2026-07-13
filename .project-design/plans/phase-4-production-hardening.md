@@ -107,6 +107,14 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Local typechecks, 59 test files / 348 tests, 93.08% line coverage, focused store/migration tests, packed upgrade/uninstall/reinstall, and the complete authenticated macOS runtime release-candidate gate pass.
 - Hosted Node 22.19 and Node 24 CI, packed state compatibility, package artifacts, and CodeQL passed at `629951c` with zero open code-scanning alerts. Delivery slice 2 is closed.
 
+### 2026-07-13 — budget and bound calibration completed
+
+- Inventoried user budgets, workflow counts, field and record bytes, evaluator and RPC aggregates, trigger admission, lease timing, subprocess timeouts, shutdown escalation, and long-timer behavior in `.project-design/release/phase-4-bounds-calibration.md`.
+- Compared every boundary with focused tests, packed release-candidate evidence, contention stress, and authenticated Pi lifecycle results.
+- Retained the three-active-hour, fifteen-cycle, and three-equivalent-failure defaults. No safety ceiling was widened and no undocumented clamp was introduced for existing version-one budgets.
+- Documented the evaluator aggregate ceiling, protected-record retention tradeoff, absence of a provider monetary cap, and exact public operational limits in `README.md`.
+- No critical/high bound defect remains in the validated macOS scope. Delivery slice 3 is closed; Linux and Windows calibration remains Phase 5 work.
+
 ## Initial disposition
 
 The pre-Phase 4 baseline is green at commit `f033d06`: 55 test files / 336 tests, 93.01% line coverage, packed install and package inspection passing, authenticated attended and proactive E2E passing, production RPC lifecycle passing with forced parent death 10/10, and zero audited vulnerabilities. Phase 4 begins with the release/supply-chain baseline; this record does not declare Phase 4 complete.

@@ -69,6 +69,15 @@ The default attended-goal profile is:
 
 Runs end explicitly as completed, failed, cancelled, interrupted, stalled, or budget exhausted. Interrupted and bounded-failure runs can be resumed with a new finite budget.
 
+### Operational limits
+
+- New completion contracts allow a 16 KiB goal, at most 50 constraints, and at most 20 exact verifier commands; each constraint or command is limited to 4 KiB.
+- Evaluator requests have an independent 128 KiB aggregate ceiling and evaluator responses are limited to 64 KiB. Pathological maximal combinations fail closed before provider invocation rather than silently dropping required evidence.
+- Recurring schedules have a five-minute minimum. Missed occurrences are discarded and overlap retains only one pending occurrence.
+- Projects may retain 50 trigger definitions. Filesystem debounce values range from 100 milliseconds to 60 seconds; process-local event ingress admits 64 trigger keys, one pending delivery per definition, and 128 remembered event IDs per trigger.
+- RPC lines are limited to 1 MiB, retained worker events to 8 MiB and 10,000 events, and retained worker stderr to 64 KiB.
+- Budget overrides must be positive safe integers and are not silently clamped. Pi Loops does not claim a provider monetary spending cap.
+
 ## Implemented command surface
 
 ```text
