@@ -51,7 +51,8 @@ export class RpcSpikeClient {
     return this.#client.checkpoint();
   }
 
-  send(command: Record<string, unknown>, signalOrTimeout?: AbortSignal | number): Promise<RpcEnvelope> {
+  async send(command: Record<string, unknown>, signalOrTimeout?: AbortSignal | number): Promise<RpcEnvelope> {
+    await this.#client.waitForDeadlineSentinel();
     if (typeof signalOrTimeout !== "number") return this.#client.request(command, signalOrTimeout);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), signalOrTimeout);

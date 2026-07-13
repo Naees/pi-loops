@@ -38,7 +38,7 @@ describe("production RPC worker client", () => {
 
   it("guards a Windows worker with an independent deadline sentinel", async () => {
     const stopSentinel = vi.fn();
-    const launchDeadlineSentinel = vi.fn(() => ({ stop: stopSentinel }));
+    const launchDeadlineSentinel = vi.fn(() => ({ ready: Promise.resolve(), stop: stopSentinel }));
     const deadlineMs = Date.now() + 60_000;
     const rpc = client(lineServer, {
       platform: "win32",

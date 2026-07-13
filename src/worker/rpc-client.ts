@@ -154,6 +154,10 @@ export class RpcWorkerClient {
     return this.#stderr;
   }
 
+  waitForDeadlineSentinel(): Promise<void> {
+    return this.#deadlineSentinel?.ready ?? Promise.resolve();
+  }
+
   checkpoint(): number {
     return this.events.length;
   }

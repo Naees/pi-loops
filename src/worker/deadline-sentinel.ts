@@ -1,8 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const SENTINEL_READY_TIMEOUT_MS = 10_000;
+
 export interface DeadlineSentinel {
+  readonly ready: Promise<void>;
   stop(): void;
 }
 
@@ -11,6 +14,12 @@ export interface DeadlineSentinelOptions {
   readonly spawn?: typeof spawn;
   readonly onError?: (error: Error) => void;
   readonly statusPath?: string;
+}
+
+function windowsSystemRoot(environment: NodeJS.ProcessEnv): string {
+  const root = environment.SystemRoot ?? environment.SYSTEMROOT ?? environment.windir ?? environment.WINDIR;
+  if (!root || !win32.isAbsolute(root)) throw new Error("Windows deadline sentinel requires an absolute system root");
+  return root;
 }
 
 function safeWindowsEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -35,37 +44,84 @@ export function launchWindowsDeadlineSentinel(
     throw new Error("Deadline sentinel status path must be absolute");
   }
 
+  const environment = options.environment ?? process.env;
+  const executable = win32.join(windowsSystemRoot(environment), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const script = fileURLToPath(new URL("./windows-job-sentinel.ps1", import.meta.url));
   const implementation = options.spawn ?? spawn;
-  const script = fileURLToPath(new URL("./deadline-sentinel-child.ts", import.meta.url));
-  const child: ChildProcess = implementation(process.execPath, [
-    script,
-    String(targetPid),
-    String(absoluteDeadlineMs),
-    ...(options.statusPath === undefined ? [] : [options.statusPath]),
+  const child: ChildProcess = implementation(executable, [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-File", script,
+    "-TargetProcessId", String(targetPid),
+    "-AbsoluteDeadlineMs", String(absoluteDeadlineMs),
+    ...(options.statusPath === undefined ? [] : ["-StatusPath", options.statusPath]),
   ], {
     detached: true,
-    env: safeWindowsEnvironment(options.environment ?? process.env),
+    env: safeWindowsEnvironment(environment),
     shell: false,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "ignore"],
     windowsHide: true,
   });
   let stopped = false;
+  let readySettled = false;
+  let output = "";
+  let readyResolve: (() => void) | undefined;
+  let readyReject: ((error: Error) => void) | undefined;
+  const ready = new Promise<void>((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+  const readyTimer = setTimeout(() => {
+    if (readySettled || stopped) return;
+    readySettled = true;
+    const error = new Error("Windows deadline sentinel did not become ready");
+    readyReject?.(error);
+    options.onError?.(error);
+    child.kill();
+  }, SENTINEL_READY_TIMEOUT_MS);
+  readyTimer.unref();
+
   const report = (error: Error): void => {
-    if (!stopped) options.onError?.(error);
+    if (stopped) return;
+    if (!readySettled) {
+      readySettled = true;
+      clearTimeout(readyTimer);
+      readyReject?.(error);
+    }
+    options.onError?.(error);
   };
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    if (readySettled) return;
+    output += chunk;
+    if (output.split(/\r?\n/).includes("PI_LOOPS_SENTINEL_READY")) {
+      readySettled = true;
+      clearTimeout(readyTimer);
+      readyResolve?.();
+    }
+  });
   child.once("error", report);
   child.once("exit", (code, signal) => {
     if (code !== 0 && !stopped) {
       report(new Error(`Deadline sentinel exited unsuccessfully: ${JSON.stringify({ code, signal })}`));
     }
   });
+  (child.stdout as (NodeJS.ReadableStream & { unref(): void }) | null)?.unref();
   child.unref();
 
   return {
+    ready,
     stop(): void {
       if (stopped) return;
       stopped = true;
+      clearTimeout(readyTimer);
       child.removeListener("error", report);
+      if (!readySettled) {
+        readySettled = true;
+        readyResolve?.();
+      }
       if (child.exitCode === null && child.signalCode === null) child.kill();
     },
   };

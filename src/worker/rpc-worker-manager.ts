@@ -194,6 +194,7 @@ export class RpcWorkerManager {
       absoluteDeadlineMs: spec.absoluteDeadlineMs,
     });
     try {
+      await client.waitForDeadlineSentinel();
       const state = responseData(await client.request({ type: "get_state" }));
       if (state.isStreaming !== false || typeof state.sessionId !== "string" || state.sessionId.trim().length === 0 || typeof state.sessionFile !== "string") {
         throw new Error(`RPC worker handshake is invalid: ${JSON.stringify(state)}`);
