@@ -45,6 +45,7 @@ const client = new RpcSpikeClient(executable, [...argsPrefix, ...args], {
     PI_LOOPS_CHILD_DEADLINE_MS: String(deadlineMs),
     PI_LOOPS_SPIKE_PID_FILE: pidFile,
   },
+  absoluteDeadlineMs: deadlineMs,
 });
 
 let shuttingDown = false;

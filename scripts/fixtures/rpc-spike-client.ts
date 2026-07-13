@@ -9,6 +9,7 @@ export interface RpcSpikeClientOptions {
   readonly maxLineBytes?: number;
   readonly maxStderrBytes?: number;
   readonly maxRetainedMessageBytes?: number;
+  readonly absoluteDeadlineMs?: number;
 }
 
 export class RpcSpikeClient {
@@ -24,6 +25,7 @@ export class RpcSpikeClient {
       ...(options.maxLineBytes === undefined ? {} : { maxLineBytes: options.maxLineBytes }),
       ...(options.maxStderrBytes === undefined ? {} : { maxStderrBytes: options.maxStderrBytes }),
       ...(options.maxRetainedMessageBytes === undefined ? {} : { maxRetainedEventBytes: options.maxRetainedMessageBytes }),
+      ...(options.absoluteDeadlineMs === undefined ? {} : { absoluteDeadlineMs: options.absoluteDeadlineMs }),
     });
   }
 

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 // Production lifecycle scripts load this module with Node's native TypeScript runner, which requires real .ts specifiers.
 import { asError } from "../shared/errors.ts";
+import { launchWindowsDeadlineSentinel, type DeadlineSentinel } from "./deadline-sentinel.ts";
 import { terminateProcessTree } from "./process-tree.ts";
 import { RpcJsonlDecoder } from "./rpc-jsonl.ts";
 
@@ -16,6 +17,12 @@ export interface RpcWorkerClientOptions {
   readonly maxRetainedEvents?: number;
   readonly platform?: NodeJS.Platform;
   readonly terminateProcessTree?: (pid: number, force: boolean) => Promise<void>;
+  readonly absoluteDeadlineMs?: number;
+  readonly launchDeadlineSentinel?: (
+    pid: number,
+    absoluteDeadlineMs: number,
+    onError: (error: Error) => void,
+  ) => DeadlineSentinel;
 }
 
 export interface RpcEnvelope extends Record<string, unknown> {
@@ -59,6 +66,7 @@ export class RpcWorkerClient {
   readonly #maxRetainedEvents: number;
   readonly #platform: NodeJS.Platform;
   readonly #terminateProcessTree: (pid: number, force: boolean) => Promise<void>;
+  readonly #deadlineSentinel: DeadlineSentinel | undefined;
   #stderr = "";
   #eventBytes = 0;
   #sequence = 0;
@@ -114,7 +122,17 @@ export class RpcWorkerClient {
     });
     this.child.once("error", (error) => this.#fail(error));
     this.child.stdin.on("error", (error) => this.#fail(error));
+
+    const shouldLaunchSentinel = this.#platform === "win32" && options.absoluteDeadlineMs !== undefined &&
+      (process.platform === "win32" || options.launchDeadlineSentinel !== undefined);
+    const sentinelFactory = options.launchDeadlineSentinel ?? ((pid: number, deadlineMs: number, onError: (error: Error) => void) =>
+      launchWindowsDeadlineSentinel(pid, deadlineMs, { environment: options.environment, onError }));
+    this.#deadlineSentinel = shouldLaunchSentinel
+      ? sentinelFactory(this.pid, options.absoluteDeadlineMs!, (error) => this.#fail(error))
+      : undefined;
+
     void this.exited.then(({ code, signal }) => {
+      this.#deadlineSentinel?.stop();
       if (!this.#failure && (this.#pending.size > 0 || this.#waiters.size > 0)) {
         this.#fail(new Error(`RPC worker exited unexpectedly: ${JSON.stringify({ code, signal })}`));
       }

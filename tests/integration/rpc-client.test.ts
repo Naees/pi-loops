@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RpcWorkerClient } from "../../src/worker/rpc-client.js";
 
 function client(program: string, overrides: Partial<ConstructorParameters<typeof RpcWorkerClient>[0]> = {}): RpcWorkerClient {
@@ -34,6 +34,21 @@ describe("production RPC worker client", () => {
     const firstStop = rpc.stop();
     expect(rpc.stop()).toBe(firstStop);
     await expect(firstStop).resolves.toEqual(expect.objectContaining({ code: 0 }));
+  });
+
+  it("guards a Windows worker with an independent deadline sentinel", async () => {
+    const stopSentinel = vi.fn();
+    const launchDeadlineSentinel = vi.fn(() => ({ stop: stopSentinel }));
+    const deadlineMs = Date.now() + 60_000;
+    const rpc = client(lineServer, {
+      platform: "win32",
+      absoluteDeadlineMs: deadlineMs,
+      launchDeadlineSentinel,
+    });
+
+    expect(launchDeadlineSentinel).toHaveBeenCalledWith(rpc.pid, deadlineMs, expect.any(Function));
+    await rpc.stop();
+    expect(stopSentinel).toHaveBeenCalledOnce();
   });
 
   it("rejects invalid commands and maps failed RPC responses", async () => {

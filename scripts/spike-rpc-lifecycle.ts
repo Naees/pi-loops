@@ -160,13 +160,18 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
   const { worktree } = await createWorktree(root);
   const canonicalWorktree = await realpath(worktree);
   const args = baseArgs(extensionPath, watchdogPath, sessionDirectory);
+  const absoluteDeadlineMs = Date.now() + 120_000;
   const environment = {
     ...process.env,
     PI_LOOPS_CHILD: "rpc-lifecycle-spike",
-    PI_LOOPS_CHILD_DEADLINE_MS: String(Date.now() + 120_000),
+    PI_LOOPS_CHILD_DEADLINE_MS: String(absoluteDeadlineMs),
     PI_LOOPS_SPIKE_PID_FILE: pidFile,
   };
-  const client = new RpcSpikeClient(command.executable, [...command.argsPrefix, ...args], { cwd: worktree, env: environment });
+  const client = new RpcSpikeClient(command.executable, [...command.argsPrefix, ...args], {
+    cwd: worktree,
+    env: environment,
+    absoluteDeadlineMs,
+  });
 
   try {
     const initialState = responseData(await client.send({ type: "get_state" }));
@@ -265,7 +270,11 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
     ]);
     assert(firstExit.code === 0, `First RPC child exited unsuccessfully: ${JSON.stringify(firstExit)}\nstderr:\n${client.stderr}`);
 
-    const resumed = new RpcSpikeClient(command.executable, [...command.argsPrefix, ...args, "--session", sessionFile], { cwd: worktree, env: environment });
+    const resumed = new RpcSpikeClient(command.executable, [...command.argsPrefix, ...args, "--session", sessionFile], {
+      cwd: worktree,
+      env: environment,
+      absoluteDeadlineMs,
+    });
     try {
       const resumedState = responseData(await resumed.send({ type: "get_state" }));
       assert(resumedState.sessionId === sessionId, "Resumed RPC child loaded a different session ID");

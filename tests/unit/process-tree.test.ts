@@ -16,6 +16,13 @@ describe("process-tree termination", () => {
     });
     await terminateProcessTree(456, { platform: "darwin", force: true, kill: fallbackKill as typeof process.kill });
     expect(fallbackKill.mock.calls).toEqual([[-456, "SIGKILL"], [456, "SIGKILL"]]);
+
+    const deniedKill = vi.fn(() => {
+      throw Object.assign(new Error("denied"), { code: "EPERM" });
+    });
+    await expect(terminateProcessTree(457, { platform: "linux", kill: deniedKill as typeof process.kill }))
+      .rejects.toMatchObject({ code: "EPERM" });
+    expect(deniedKill).toHaveBeenCalledOnce();
   });
 
   it("uses the absolute Windows system taskkill without a shell", async () => {

@@ -191,6 +191,7 @@ export class RpcWorkerManager {
         [CHILD_DEADLINE_ENV]: String(spec.absoluteDeadlineMs),
       },
       platform: this.#platform,
+      absoluteDeadlineMs: spec.absoluteDeadlineMs,
     });
     try {
       const state = responseData(await client.request({ type: "get_state" }));

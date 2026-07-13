@@ -66,7 +66,8 @@ export async function terminateProcessTree(pid: number, options: ProcessTreeTerm
   const kill = options.kill ?? process.kill;
   try {
     kill(-pid, signal);
-  } catch {
+  } catch (groupError) {
+    if ((groupError as NodeJS.ErrnoException).code !== "ESRCH") throw groupError;
     try {
       kill(pid, signal);
     } catch (processError) {
