@@ -318,6 +318,6 @@ export class RpcWorkerClient {
       waiter.reject(error);
     }
     this.#waiters.clear();
-    if (this.child.exitCode === null && this.child.signalCode === null) void this.#terminate(false).catch(() => undefined);
+    if (this.child.exitCode === null && this.child.signalCode === null) void this.#terminate(true).catch(() => undefined);
   }
 }

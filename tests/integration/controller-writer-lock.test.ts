@@ -123,7 +123,7 @@ describe("controller repository writer lock", () => {
     if (identity.kind !== "git") throw new Error("Expected Git identity");
     const path = repositoryWriterLeasePath(dataRoot, identity.commonGitDirectory);
     expect(path).not.toContain(identity.commonGitDirectory);
-    expect(path.startsWith(`${dataRoot}/`)).toBe(true);
+    expect(dirname(path)).toBe(dataRoot);
     expect(path).toMatch(/[0-9a-f]{64}\.lease\.json$/);
 
     const first = await acquireControllerWriterLock(dataRoot, rootBinding, 30_000, new Date(), dataRoot);

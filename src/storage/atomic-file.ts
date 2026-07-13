@@ -2,6 +2,25 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
+const WINDOWS_RENAME_RETRY_MS = 2_000;
+const WINDOWS_RENAME_RETRY_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
+
+async function replaceFile(temporaryPath: string, path: string): Promise<void> {
+  const deadline = Date.now() + WINDOWS_RENAME_RETRY_MS;
+  let delayMs = 5;
+  while (true) {
+    try {
+      await rename(temporaryPath, path);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || !code || !WINDOWS_RENAME_RETRY_CODES.has(code) || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs = Math.min(delayMs * 2, 50);
+    }
+  }
+}
+
 export interface AtomicJsonWriteOptions {
   readonly maxBytes?: number;
   readonly oversizedMessage?: string;
@@ -31,7 +50,7 @@ export async function writeJsonAtomic(path: string, value: unknown, options: Ato
     } finally {
       await handle.close();
     }
-    await rename(temporaryPath, path);
+    await replaceFile(temporaryPath, path);
     created = false;
   } finally {
     if (created) await rm(temporaryPath, { force: true });

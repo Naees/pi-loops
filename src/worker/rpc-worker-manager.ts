@@ -106,11 +106,18 @@ export class ManagedRpcWorker {
   }
 }
 
+export interface RpcWorkerQualificationOptions {
+  readonly extensionPaths: readonly string[];
+  readonly provider: string;
+  readonly model: string;
+}
+
 export interface RpcWorkerManagerOptions {
   readonly resolveLaunch?: () => Promise<PiLaunchCommand>;
   readonly extensionPath?: string;
   readonly platform?: NodeJS.Platform;
   readonly qualifiedPlatforms?: readonly NodeJS.Platform[];
+  readonly qualification?: RpcWorkerQualificationOptions;
 }
 
 export class RpcWorkerManager {
@@ -118,12 +125,26 @@ export class RpcWorkerManager {
   readonly #extensionPath: string;
   readonly #platform: NodeJS.Platform;
   readonly #qualifiedPlatforms: readonly NodeJS.Platform[];
+  readonly #qualification: RpcWorkerQualificationOptions | undefined;
 
   constructor(options: RpcWorkerManagerOptions = {}) {
     this.#resolveLaunch = options.resolveLaunch ?? resolveCurrentPiLaunchCommand;
     this.#extensionPath = options.extensionPath ?? fileURLToPath(new URL("../extension/index.ts", import.meta.url));
     this.#platform = options.platform ?? process.platform;
     this.#qualifiedPlatforms = options.qualifiedPlatforms ?? QUALIFIED_UNATTENDED_PLATFORMS;
+    this.#qualification = undefined;
+    if (options.qualification) {
+      if (options.qualification.extensionPaths.length === 0 || options.qualification.extensionPaths.length > 10 ||
+        options.qualification.extensionPaths.some((path) => !isAbsolute(path)) ||
+        !options.qualification.provider.trim() || !options.qualification.model.trim()) {
+        throw new Error("RPC worker qualification options are invalid");
+      }
+      this.#qualification = {
+        extensionPaths: [...options.qualification.extensionPaths],
+        provider: options.qualification.provider,
+        model: options.qualification.model,
+      };
+    }
   }
 
   async launch(spec: WorkerLaunchSpec, ui: ParentWorkerUi): Promise<ManagedRpcWorker> {
@@ -155,6 +176,8 @@ export class RpcWorkerManager {
       ...launch.argsPrefix,
       "--mode", "rpc",
       "--extension", this.#extensionPath,
+      ...(this.#qualification?.extensionPaths.flatMap((path) => ["--extension", path]) ?? []),
+      ...(this.#qualification ? ["--provider", this.#qualification.provider, "--model", this.#qualification.model] : []),
       "--session-dir", sessionDirectory,
       ...(resumeSessionFile === undefined ? [] : ["--session", resumeSessionFile]),
     ];

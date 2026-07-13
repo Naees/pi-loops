@@ -8,6 +8,7 @@ import {
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
 import { resolveCurrentPiLaunchCommand } from "../../src/worker/pi-executable.ts";
 
 const PROVIDER = "pi-loops-lifecycle";
@@ -62,16 +63,13 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function descendantCommand(pidFile: string): string {
-  const code = [
-    "const fs = require('node:fs');",
-    "const { spawn } = require('node:child_process');",
-    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-    `fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parentPid: process.pid, childPid: child.pid }));`,
-    "setInterval(() => {}, 1000);",
-  ].join(" ");
-  const executable = process.platform === "win32" ? process.execPath.replaceAll("\\", "/") : process.execPath;
-  return `${shellQuote(executable)} -e ${shellQuote(code)}`;
+function shellPath(path: string): string {
+  return process.platform === "win32" ? path.replaceAll("\\", "/") : path;
+}
+
+function descendantCommand(): string {
+  const fixture = fileURLToPath(new URL("./rpc-lifecycle-descendant.cjs", import.meta.url));
+  return `${shellQuote(shellPath(process.execPath))} ${shellQuote(shellPath(fixture))}`;
 }
 
 function emitText(stream: AssistantMessageEventStream, output: AssistantMessage, text: string): void {
@@ -105,7 +103,19 @@ function streamControlled(
           type: "toolCall" as const,
           id: "pi_loops_lifecycle_tool",
           name: "bash",
-          arguments: { command: descendantCommand(pidFile) },
+          arguments: { command: descendantCommand() },
+        };
+        output.content.push(toolCall);
+        const contentIndex = output.content.length - 1;
+        stream.push({ type: "toolcall_start", contentIndex, partial: output });
+        stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: output });
+        output.stopReason = "toolUse";
+      } else if (prompt.includes("proactive-runtime-result.txt") && !hasToolResult(context)) {
+        const toolCall = {
+          type: "toolCall" as const,
+          id: "pi_loops_qualification_writer",
+          name: "bash",
+          arguments: { command: "printf 'PROACTIVE_RUNTIME_OK\\n' > proactive-runtime-result.txt" },
         };
         output.content.push(toolCall);
         const contentIndex = output.content.length - 1;

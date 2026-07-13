@@ -59,8 +59,7 @@ describe("production RPC worker client", () => {
   });
 
   it("bounds aggregate retained events", async () => {
-    const payload = "x".repeat(256 * 1024);
-    const rpc = client(`const line = JSON.stringify({ type: "event", payload: ${JSON.stringify(payload)} }); for (let i = 0; i < 40; i++) console.log(line); setInterval(() => {}, 1000);`);
+    const rpc = client(`const line = JSON.stringify({ type: "event", payload: "x".repeat(256 * 1024) }); for (let i = 0; i < 40; i++) console.log(line); setInterval(() => {}, 1000);`);
     try {
       await expect(rpc.waitFor(() => false, { timeoutMs: 10_000 })).rejects.toThrow("retained events exceed 8388608 bytes");
     } finally {

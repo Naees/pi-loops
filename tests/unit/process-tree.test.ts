@@ -1,4 +1,5 @@
 import type { execFile as execFileType } from "node:child_process";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveWindowsTaskkill, terminateProcessTree } from "../../src/worker/process-tree.js";
 
@@ -32,7 +33,7 @@ describe("process-tree termination", () => {
     });
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]).toBe("/windows/System32/taskkill.exe");
+    expect(calls[0]?.[0]).toBe(join("/windows", "System32", "taskkill.exe"));
     expect(calls[0]?.[1]).toEqual(["/T", "/PID", "789", "/F"]);
     expect(calls[0]?.[2]).toEqual(expect.objectContaining({ windowsHide: true, timeout: 10_000 }));
   });

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "vitest";
 import { UnattendedRunController } from "../src/controller/unattended-run-controller.ts";
 import { createProjectId } from "../src/shared/ids.ts";
@@ -46,7 +46,15 @@ test("real proactive runtime preserves the active checkout and retains review ou
     throw new Error(`Qualification platform ${qualificationPlatform} does not match ${process.platform}`);
   }
   const workers = new RpcWorkerManager({
-    ...(qualificationPlatform === process.platform ? { platform: process.platform, qualifiedPlatforms: [process.platform] } : {}),
+    ...(qualificationPlatform === process.platform ? {
+      platform: process.platform,
+      qualifiedPlatforms: [process.platform],
+      qualification: {
+        extensionPaths: [resolve("scripts/fixtures/rpc-lifecycle-extension.ts")],
+        provider: "pi-loops-lifecycle",
+        model: "controlled",
+      },
+    } : {}),
     resolveLaunch: async () => ({
       executable: process.execPath,
       argsPrefix: [piCli],
