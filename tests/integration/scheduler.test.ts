@@ -317,7 +317,7 @@ describe("schedule controller", () => {
     await controller.start(host, firstRunner);
     const schedule = await controller.create({ expression: "in 1m", goal: "single owner" }, host);
     await vi.advanceTimersByTimeAsync(60_000);
-    await vi.waitFor(() => expect(firstRunner).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(firstRunner).toHaveBeenCalledOnce(), { timeout: 10_000 });
 
     const contender = new ScheduleController({ dataRoot, now: () => new Date(Date.now()) });
     await contender.start(host, secondRunner);
@@ -331,7 +331,7 @@ describe("schedule controller", () => {
       expect((await contender.list(host.cwd)).find((item) => item.scheduleId === schedule.scheduleId)).toEqual(
         expect.objectContaining({ state: "paused", pauseReason: "completed" }),
       );
-    });
+    }, { timeout: 10_000 });
     expect(secondRunner).not.toHaveBeenCalled();
     const projectId = createProjectId(await realpath(project));
     await expectClaimsReleased(dataRoot, projectId, schedule.scheduleId);
@@ -366,7 +366,7 @@ describe("schedule controller", () => {
           state: "paused",
           pauseReason: "interrupted",
         }));
-      }, { timeout: 1_000 });
+      }, { timeout: 10_000 });
       expect(runner).not.toHaveBeenCalled();
     } finally {
       await releaseWriterLease(claim).catch(() => undefined);

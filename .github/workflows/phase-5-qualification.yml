@@ -27,8 +27,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - if: matrix.node == '22.19.0'
+      - if: matrix.node == '22.19.0' && runner.os != 'Windows'
         run: npm run test:coverage
+      - if: matrix.node == '22.19.0' && runner.os == 'Windows'
+        run: npm run test:coverage -- --maxWorkers=1
       - if: matrix.node == '22.19.0'
         run: npm run security:check
       - if: matrix.node == '22.19.0'
