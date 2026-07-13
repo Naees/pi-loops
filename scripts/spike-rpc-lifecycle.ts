@@ -155,6 +155,7 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
   const root = await mkdtemp(join(tmpdir(), "pi-loops-rpc-lifecycle-"));
   const sessionDirectory = join(root, "sessions");
   const pidFile = join(root, "descendants.json");
+  const sentinelStatusFile = join(root, "sentinel-status.json");
   const extensionPath = resolve("scripts/fixtures/rpc-lifecycle-extension.ts");
   const watchdogPath = resolve("src/extension/index.ts");
   const { worktree } = await createWorktree(root);
@@ -171,6 +172,7 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
     cwd: worktree,
     env: environment,
     absoluteDeadlineMs,
+    deadlineSentinelStatusPath: sentinelStatusFile,
   });
 
   try {
@@ -301,6 +303,10 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
       extensionUiRelay: "passed",
       sameWorktreeSessionResume: "passed",
     };
+  } catch (error) {
+    const sentinelStatus = await readFile(sentinelStatusFile, "utf8").catch((statusError: NodeJS.ErrnoException) =>
+      `unavailable:${statusError.code ?? statusError.message}`);
+    throw new Error(`Lifecycle scenarios failed; sentinel=${sentinelStatus}`, { cause: error });
   } finally {
     await client.stop().catch(() => undefined);
     await removeTemporaryRoot(root);
