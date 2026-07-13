@@ -91,7 +91,9 @@ try {
   if ($job -eq [IntPtr]::Zero) { throw "CreateJobObject failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
 
   $info = New-Object -TypeName 'PiLoopsJobObject+JOBOBJECT_EXTENDED_LIMIT_INFORMATION'
-  $info.BasicLimitInformation.LimitFlags = [PiLoopsJobObject]::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+  $basicLimits = New-Object -TypeName 'PiLoopsJobObject+JOBOBJECT_BASIC_LIMIT_INFORMATION'
+  $basicLimits.LimitFlags = [PiLoopsJobObject]::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+  $info.BasicLimitInformation = $basicLimits
   $infoLength = [Runtime.InteropServices.Marshal]::SizeOf($info)
   $infoPointer = [Runtime.InteropServices.Marshal]::AllocHGlobal($infoLength)
   [Runtime.InteropServices.Marshal]::StructureToPtr($info, $infoPointer, $false)

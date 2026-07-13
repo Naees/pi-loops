@@ -102,10 +102,6 @@ export function launchWindowsDeadlineSentinel(
       report(new Error(`Deadline sentinel exited unsuccessfully: ${JSON.stringify({ code, signal, stderr })}`));
     }
   });
-  (child.stdout as (NodeJS.ReadableStream & { unref(): void }) | null)?.unref();
-  (child.stderr as (NodeJS.ReadableStream & { unref(): void }) | null)?.unref();
-  child.unref();
-
   return {
     ready,
     stop(): void {

@@ -49,9 +49,9 @@ describe("Windows deadline sentinel", () => {
       windowsHide: true,
       env: expect.objectContaining({ ProgramFiles: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" }),
     }));
-    expect(childUnref).toHaveBeenCalledOnce();
-    expect(stdoutUnref).toHaveBeenCalledOnce();
-    expect(stderrUnref).toHaveBeenCalledOnce();
+    expect(childUnref).not.toHaveBeenCalled();
+    expect(stdoutUnref).not.toHaveBeenCalled();
+    expect(stderrUnref).not.toHaveBeenCalled();
 
     sentinel.stop();
     sentinel.stop();
