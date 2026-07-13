@@ -39,6 +39,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - The lockfile now supports clean installation with the minimum Node 22.19 toolchain's npm 10 as well as current npm.
+- Release-candidate checksum files now contain artifact-relative tarball names and verify correctly after download.
 - Malformed-response RPC tests now pass fixture envelopes as data rather than interpolating serialized values into child source code.
 - Notice, lease, project-manifest, and current-Pi manifest reads now enforce their byte ceilings through the single-handle bounded reader, closing growth-after-stat and unbounded-read paths.
 - Terminal attended runs now release their writer lease even if persistence, transcript, or notification callbacks fail.
