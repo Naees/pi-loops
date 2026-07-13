@@ -45,7 +45,7 @@ jobs:
       - run: npm run test:e2e:scheduled:packed
       - run: mkdir -p artifacts && node scripts/security-check.mjs --sbom artifacts/pi-loops.cdx.json
       - run: npm pack --json --pack-destination artifacts > artifacts/npm-pack.json
-      - run: cd artifacts && shasum -a 256 *.tgz > SHA256SUMS
+      - run: cd artifacts && shasum -a 256 *.tgz > SHA256SUMS && shasum -a 256 -c SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pi-loops-release-candidate-${{ github.sha }}
