@@ -1,10 +1,12 @@
 # Security Policy
 
-Pi extensions execute with the user's system permissions. Review the source before installing development or prerelease builds.
+Pi extensions execute with the user's system permissions. Review the source before installation.
 
 ## Supported versions
 
-No public version is currently supported. This policy will be updated before the first release.
+| Version | Supported |
+| --- | --- |
+| 0.1.x | Yes |
 
 ## Reporting a vulnerability
 

@@ -1,6 +1,6 @@
 # Pi Loops
 
-> **Status: attended goals, scheduling, and proactive triggers are implemented and natively qualified on macOS, Linux, and Windows with Pi 0.80.6; no public npm release exists yet.**
+> **Status: version 0.1.0 is release-qualified on macOS, Linux, and Windows with Pi 0.80.6.**
 
 Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
@@ -8,15 +8,13 @@ The project is designed around one rule:
 
 > Pi Loops runs only while Pi is running. It is not a daemon or hosted automation service.
 
-## Planned installation
-
-The intended zero-setup installation is:
+## Installation
 
 ```text
 pi install npm:@naees/pi-loops
 ```
 
-Once published, it will require an existing working Pi installation with:
+Pi Loops requires an existing working Pi installation with:
 
 - An authenticated model/provider.
 - A trusted project.
@@ -258,9 +256,9 @@ No project configuration file will be created automatically.
 - Real Pi 0.80.6 RPC lifecycle and proactive writer gates exercise native child cleanup and review branches.
 - Forced-parent-death cleanup is repeated 10 times per native lifecycle run.
 
-Physical devices are not required; native CI runners provide the operating-system evidence. The remaining work is the final clean-install and manual publication gate.
+Physical devices are not required; native CI runners provide the operating-system evidence. Release candidates additionally pass clean-install, package-content, security, compatibility, and authenticated macOS runtime gates.
 
-Code will be reviewed and refactored between every phase rather than postponing cleanup until the end.
+Changes are reviewed and refactored incrementally rather than postponing cleanup.
 
 ## Security
 
@@ -268,15 +266,13 @@ Pi packages execute with the user's system permissions. Review package source be
 
 The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Phase 4 adds automated production-dependency auditing, SPDX license review, CycloneDX SBOM validation, high-confidence tracked-secret scanning, static analysis, and non-publishing release-candidate artifacts. Scheduled and proactive child launch is enabled on the natively qualified macOS, Linux, and Windows/Pi 0.80.6 combinations; unknown platforms remain fail-closed.
 
-Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. A comprehensive vulnerability and supply-chain assessment remains required before release.
+Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. Automated security controls supplement manual review of the process, filesystem, Git, event, evaluator, and deletion boundaries.
 
 Report security issues through the private process documented in [`SECURITY.md`](SECURITY.md).
 
 ## Project status
 
-The product contract and architecture are approved. Attended goals, scheduling, proactive triggers, production hardening, and native Linux/Windows qualification are complete for Pi 0.80.6. The final publication gate remains. No public npm release should be assumed from this README.
-
-The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
+Version 0.1.0 includes attended goals, scheduling, proactive triggers, production hardening, and native macOS, Linux, and Windows qualification for Pi 0.80.6. Unknown platforms and unqualified Pi versions remain fail-closed for unattended execution.
 
 ## License
 

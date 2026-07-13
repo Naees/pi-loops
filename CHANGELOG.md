@@ -6,6 +6,8 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-12
+
 ### Added
 
 - Approved product and architecture design.
@@ -53,3 +55,4 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Run deletion now removes the run's deterministic Pi Loops-managed child-session directory while preserving unmanaged paths.
 - RPC worker startup rejects empty session IDs, reported session directories, and reported or resumed session symlinks.
 - Already-aborted worker UI requests and empty select options now fail closed before invoking parent UI callbacks.
+- Windows worker startup now fails closed if the Job Object sentinel exits before readiness, and case-insensitive environment lookup preserves the preferred 64-bit PowerShell location.
