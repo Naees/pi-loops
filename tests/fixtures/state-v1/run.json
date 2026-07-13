@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_1234abcd",
+  "projectId": "{{PROJECT_ID}}",
+  "mode": "goal",
+  "state": "interrupted",
+  "goal": "resume the version-one compatibility fixture",
+  "constraints": [
+    "preserve behavior"
+  ],
+  "verifierCommands": [
+    "npm test"
+  ],
+  "budget": {
+    "maxActiveMs": 10800000,
+    "maxCycles": 15,
+    "stallThreshold": 3
+  },
+  "budgetEpoch": 1,
+  "budgetHistory": [],
+  "cycle": 1,
+  "totalCycles": 1,
+  "activeMs": 1000,
+  "equivalentFailures": 0,
+  "latestWorkerSummary": "work was interrupted",
+  "latestEvidence": [],
+  "createdAt": "2026-07-12T12:00:00.000Z",
+  "updatedAt": "2026-07-12T12:00:04.000Z",
+  "transitions": [
+    {
+      "from": "configuring",
+      "to": "preflight",
+      "at": "2026-07-12T12:00:01.000Z",
+      "reason": "Completion contract is ready"
+    },
+    {
+      "from": "preflight",
+      "to": "starting",
+      "at": "2026-07-12T12:00:02.000Z",
+      "reason": "Attended goal is starting"
+    },
+    {
+      "from": "starting",
+      "to": "running",
+      "at": "2026-07-12T12:00:03.000Z",
+      "reason": "First attended work cycle started"
+    },
+    {
+      "from": "running",
+      "to": "interrupted",
+      "at": "2026-07-12T12:00:04.000Z",
+      "reason": "Pi session shut down"
+    }
+  ],
+  "terminalReason": "Pi session shut down"
+}

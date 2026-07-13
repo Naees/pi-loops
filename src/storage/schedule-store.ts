@@ -14,6 +14,7 @@ import { isBoundedNonEmptyStringArray, isCanonicalIsoDate } from "./record-valid
 import { writeJsonAtomic } from "./atomic-file.js";
 import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
+import { prepareStoredState } from "./state-migrations.js";
 
 const MAX_SCHEDULE_RECORD_BYTES = 1024 * 1024;
 const PAUSE_REASONS: readonly SchedulePauseReason[] = ["completed", "missed", "interrupted", "user"];
@@ -151,14 +152,23 @@ export class ScheduleStore {
   }
 
   async load(scheduleId: string): Promise<ScheduleRecord | undefined> {
+    const path = this.#path(scheduleId);
     const value = await readBoundedJsonFile(
-      this.#path(scheduleId),
+      path,
       MAX_SCHEDULE_RECORD_BYTES,
       `Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`,
     );
     if (value === undefined) return undefined;
-    const schedule = parseScheduleRecord(value);
+    const prepared = prepareStoredState("schedule", value);
+    const schedule = parseScheduleRecord(prepared.value);
     if (schedule.projectId !== this.#projectId) throw new Error("Stored schedule belongs to a different project");
+    if (prepared.migrated) {
+      await this.#assertMutationLease();
+      if (Buffer.byteLength(JSON.stringify(schedule), "utf8") > MAX_SCHEDULE_RECORD_BYTES) {
+        throw new Error(`Schedule record exceeds ${MAX_SCHEDULE_RECORD_BYTES} bytes`);
+      }
+      await writeJsonAtomic(path, schedule);
+    }
     return schedule;
   }
 

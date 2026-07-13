@@ -24,6 +24,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Phase 3 proactive triggers with confirmed project-contained filesystem watches, strict namespaced event-bus payloads, model-facing firing of confirmed definitions, debounce, coalescing, restart recovery, and trigger claims.
 - Phase 4 supply-chain checks for production advisories, reviewed SPDX licenses, CycloneDX SBOM validation, and high-confidence tracked-secret patterns.
 - Non-publishing macOS release-candidate automation, minimum/current Node CI, CodeQL analysis, dependency review, package artifacts, and checksums.
+- Explicit sequential stored-state migration infrastructure, frozen version-one compatibility fixtures, and packed upgrade/uninstall/reinstall validation.
 
 ### Changed
 

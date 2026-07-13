@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "maxActiveMs": 10800000,
+    "maxCycles": 15,
+    "stallThreshold": 3
+  },
+  "scheduling": {
+    "minimumRecurringMs": 300000
+  },
+  "retention": {
+    "terminalRunsPerProject": 50
+  },
+  "evaluator": {
+    "model": "current"
+  }
+}

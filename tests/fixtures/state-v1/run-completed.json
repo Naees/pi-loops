@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_b16b00b5",
+  "projectId": "{{PROJECT_ID}}",
+  "mode": "goal",
+  "state": "completed",
+  "goal": "preserve the terminal version-one fixture",
+  "constraints": [],
+  "verifierCommands": [],
+  "budget": {
+    "maxActiveMs": 10800000,
+    "maxCycles": 15,
+    "stallThreshold": 3
+  },
+  "budgetEpoch": 1,
+  "budgetHistory": [],
+  "cycle": 1,
+  "totalCycles": 1,
+  "activeMs": 1000,
+  "equivalentFailures": 0,
+  "latestWorkerSummary": "completed fixture work",
+  "latestEvidence": [],
+  "latestEvaluation": {
+    "complete": true,
+    "needsUser": false,
+    "reason": "accepted",
+    "failedCriteria": [],
+    "feedback": null
+  },
+  "createdAt": "2026-07-12T12:00:00.000Z",
+  "updatedAt": "2026-07-12T12:00:06.000Z",
+  "transitions": [
+    {
+      "from": "configuring",
+      "to": "preflight",
+      "at": "2026-07-12T12:00:01.000Z",
+      "reason": "Completion contract is ready"
+    },
+    {
+      "from": "preflight",
+      "to": "starting",
+      "at": "2026-07-12T12:00:02.000Z",
+      "reason": "Attended goal is starting"
+    },
+    {
+      "from": "starting",
+      "to": "running",
+      "at": "2026-07-12T12:00:03.000Z",
+      "reason": "First attended work cycle started"
+    },
+    {
+      "from": "running",
+      "to": "verifying",
+      "at": "2026-07-12T12:00:04.000Z",
+      "reason": "Worker cycle settled"
+    },
+    {
+      "from": "verifying",
+      "to": "evaluating",
+      "at": "2026-07-12T12:00:05.000Z",
+      "reason": "Deterministic evidence passed"
+    },
+    {
+      "from": "evaluating",
+      "to": "finalizing",
+      "at": "2026-07-12T12:00:05.500Z",
+      "reason": "accepted"
+    },
+    {
+      "from": "finalizing",
+      "to": "completed",
+      "at": "2026-07-12T12:00:06.000Z",
+      "reason": "accepted"
+    }
+  ],
+  "terminalReason": "accepted"
+}

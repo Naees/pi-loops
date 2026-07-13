@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "scheduleId": "schedule_1234abcd",
+  "projectId": "{{PROJECT_ID}}",
+  "projectRoot": "{{PROJECT_ROOT}}",
+  "state": "enabled",
+  "goal": "run the version-one scheduled fixture",
+  "constraints": [],
+  "verifierCommands": [
+    "npm test"
+  ],
+  "budget": {
+    "maxActiveMs": 10800000,
+    "maxCycles": 15,
+    "stallThreshold": 3
+  },
+  "expression": "every 5m",
+  "normalizedExpression": "every 5 minutes",
+  "timing": {
+    "kind": "recurring",
+    "intervalMs": 300000,
+    "anchorAt": "2026-07-12T12:00:00.000Z"
+  },
+  "nextFireAt": "2026-07-12T12:05:00.000Z",
+  "createdAt": "2026-07-12T12:00:00.000Z",
+  "updatedAt": "2026-07-12T12:00:00.000Z"
+}

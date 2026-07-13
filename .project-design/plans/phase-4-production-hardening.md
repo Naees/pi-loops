@@ -97,6 +97,15 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - CodeQL reported one medium test-only code-sanitization finding where a serialized fixture was interpolated into `node -e` source. The fixture now crosses the child boundary as data through a dedicated environment value; hosted CodeQL revalidation passed with zero open alerts.
 - Hosted CI is green on Node 22.19 and Node 24, including clean install, the complete suite, security policy, packed install, packed unattended fixtures, SBOM generation, tarball creation, and artifact upload. Delivery slice 1 is closed.
 
+### 2026-07-13 — persisted-state compatibility implemented locally
+
+- Added an explicit sequential migration dispatcher for run, schedule, and trigger records. It accepts schema version 1 unchanged, requires every reviewed migration to advance exactly one version, validates each returned version, clones source input before migration, and fails closed on missing paths or unknown newer versions.
+- The current production migration registry is intentionally empty because no schema older than version 1 has been publicly released. No fictional version-zero data is accepted.
+- Store loads validate prepared records and may persist migrated output only while holding the relevant mutation lease, using the existing bounded atomic-write path. Focused tests prove unlocked loads cannot rewrite migration output.
+- Frozen version-one fixtures now cover runs, schedules, triggers, resolved configuration, and notices. Lease records remain ephemeral ownership metadata: the authoritative live lock must never be migrated or taken over by package upgrade code.
+- Added a packed compatibility gate that installs the tarball, reads all frozen state without rewriting it, rejects newer versions without mutation, installs over the existing package, uninstalls, reinstalls, and proves package operations preserve user runtime state while uninstall removes package files.
+- Local typechecks, 59 test files / 348 tests, 93.08% line coverage, focused store/migration tests, packed upgrade/uninstall/reinstall, and the complete authenticated macOS runtime release-candidate gate pass. Hosted Node 22.19/current package revalidation remains required before delivery slice 2 is closed.
+
 ## Initial disposition
 
 The pre-Phase 4 baseline is green at commit `f033d06`: 55 test files / 336 tests, 93.01% line coverage, packed install and package inspection passing, authenticated attended and proactive E2E passing, production RPC lifecycle passing with forced parent death 10/10, and zero audited vulnerabilities. Phase 4 begins with the release/supply-chain baseline; this record does not declare Phase 4 complete.

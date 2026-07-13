@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "runId": "run_cafebabe",
+  "projectId": "{{PROJECT_ID}}",
+  "scheduleId": "schedule_1234abcd",
+  "mode": "scheduled",
+  "state": "interrupted",
+  "goal": "preserve the unresolved version-one worktree fixture",
+  "constraints": [],
+  "verifierCommands": [],
+  "budget": {
+    "maxActiveMs": 10800000,
+    "maxCycles": 15,
+    "stallThreshold": 3
+  },
+  "budgetEpoch": 1,
+  "budgetHistory": [],
+  "cycle": 1,
+  "totalCycles": 1,
+  "activeMs": 1000,
+  "budgetDeadlineAt": "2026-07-12T15:00:00.000Z",
+  "equivalentFailures": 0,
+  "latestEvidence": [],
+  "createdAt": "2026-07-12T12:00:00.000Z",
+  "updatedAt": "2026-07-12T12:00:04.000Z",
+  "transitions": [
+    {
+      "from": "configuring",
+      "to": "preflight",
+      "at": "2026-07-12T12:00:01.000Z",
+      "reason": "Scheduled writer preflight started"
+    },
+    {
+      "from": "preflight",
+      "to": "starting",
+      "at": "2026-07-12T12:00:02.000Z",
+      "reason": "Isolated scheduled worker is starting"
+    },
+    {
+      "from": "starting",
+      "to": "running",
+      "at": "2026-07-12T12:00:03.000Z",
+      "reason": "Isolated scheduled worker started"
+    },
+    {
+      "from": "running",
+      "to": "interrupted",
+      "at": "2026-07-12T12:00:04.000Z",
+      "reason": "Scheduled worker was interrupted"
+    }
+  ],
+  "terminalReason": "Scheduled worker was interrupted",
+  "worker": {
+    "repositoryRoot": "{{PROJECT_ROOT}}",
+    "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "branch": "pi-loops/run_cafebabe",
+    "worktreePath": "{{PROJECT_ROOT}}/retained-worktree",
+    "sessionDirectory": "{{PROJECT_ROOT}}/retained-sessions",
+    "sessionId": "session-v1",
+    "sessionFile": "{{PROJECT_ROOT}}/retained-sessions/session.jsonl",
+    "ownershipToken": "version-one-owner",
+    "piVersion": "0.80.6",
+    "worktreeRetained": true
+  }
+}

@@ -7,6 +7,7 @@ import { isBoundedNonEmptyStringArray, isCanonicalIsoDate } from "./record-valid
 import { writeJsonAtomic } from "./atomic-file.js";
 import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
+import { prepareStoredState } from "./state-migrations.js";
 
 const MAX_TRIGGER_RECORD_BYTES = 1024 * 1024;
 export const MAX_TRIGGER_DEFINITIONS = 50;
@@ -117,14 +118,23 @@ export class TriggerStore {
   }
 
   async load(triggerId: string): Promise<TriggerRecord | undefined> {
+    const path = this.#path(triggerId);
     const value = await readBoundedJsonFile(
-      this.#path(triggerId),
+      path,
       MAX_TRIGGER_RECORD_BYTES,
       `Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`,
     );
     if (value === undefined) return undefined;
-    const trigger = parseTriggerRecord(value);
+    const prepared = prepareStoredState("trigger", value);
+    const trigger = parseTriggerRecord(prepared.value);
     if (trigger.projectId !== this.#projectId) throw new Error("Stored trigger belongs to a different project");
+    if (prepared.migrated) {
+      await this.#assertMutationLease();
+      if (Buffer.byteLength(JSON.stringify(trigger), "utf8") > MAX_TRIGGER_RECORD_BYTES) {
+        throw new Error(`Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`);
+      }
+      await writeJsonAtomic(path, trigger);
+    }
     return trigger;
   }
 

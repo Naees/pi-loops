@@ -48,6 +48,7 @@
     "check": "npm run typecheck && npm run typecheck:scripts && npm test",
     "pack:inspect": "node scripts/inspect-pack.mjs",
     "test:packed": "node scripts/test-packed-install.mjs",
+    "test:packed:state": "node scripts/test-packed-state-compatibility.mjs",
     "test:e2e:attended": "node scripts/e2e-attended-goal.mjs",
     "test:e2e:scheduled:packed": "node scripts/e2e-packed-scheduled-writer.mjs",
     "test:e2e:proactive:runtime": "vitest run --config scripts/vitest.proactive.config.ts --reporter=dot",

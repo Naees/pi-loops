@@ -41,6 +41,7 @@ jobs:
       - run: npm run test:packed
         env:
           PI_LOOPS_TEST_PI: ${{ github.workspace }}/node_modules/.bin/pi
+      - run: npm run test:packed:state
       - run: npm run test:e2e:scheduled:packed
       - run: mkdir -p artifacts && node scripts/security-check.mjs --sbom artifacts/pi-loops.cdx.json
       - run: npm pack --pack-destination artifacts

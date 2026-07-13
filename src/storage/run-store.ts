@@ -8,6 +8,7 @@ import { writeJsonAtomic } from "./atomic-file.js";
 import { listRecordIds, readBoundedJsonFile } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 import { selectRetentionEvictions } from "./retention.js";
+import { prepareStoredState } from "./state-migrations.js";
 
 const MAX_RUN_RECORD_BYTES = 2 * 1024 * 1024;
 const ACTIVE_CRASH_STATES = new Set<RunState>([
@@ -258,14 +259,23 @@ export class RunStore {
   }
 
   async load(runId: string): Promise<RunRecord | undefined> {
+    const path = this.#path(runId);
     const value = await readBoundedJsonFile(
-      this.#path(runId),
+      path,
       MAX_RUN_RECORD_BYTES,
       `Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`,
     );
     if (value === undefined) return undefined;
-    const run = parseRunRecord(value);
+    const prepared = prepareStoredState("run", value);
+    const run = parseRunRecord(prepared.value);
     if (run.projectId !== this.#projectId) throw new Error("Stored run belongs to a different project");
+    if (prepared.migrated) {
+      await this.#assertMutationLease();
+      if (Buffer.byteLength(JSON.stringify(run), "utf8") > MAX_RUN_RECORD_BYTES) {
+        throw new Error(`Run record exceeds ${MAX_RUN_RECORD_BYTES} bytes`);
+      }
+      await writeJsonAtomic(path, run);
+    }
     return run;
   }
 

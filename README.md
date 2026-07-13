@@ -178,6 +178,12 @@ Current retention behavior:
 
 Pi session history is append-only. `/loops delete` cannot erase the user's command, agent messages, or concise state entries already written to the parent Pi transcript. New state entries intentionally omit goal text and evidence. Project files and Git history are also outside runtime-record deletion.
 
+## Upgrade and uninstall behavior
+
+Persisted run, schedule, trigger, notice, and configuration records currently use schema version 1. Release candidates must continue reading frozen version-one fixtures without rewriting them. Future migrations must be explicit, sequential, validated, atomic, and performed only while the relevant mutation lease is held. Unknown newer record versions fail closed and are never downgraded or discarded.
+
+Upgrading or reinstalling the npm package preserves user-local Pi Loops runtime state. Uninstalling removes package files but intentionally leaves user runtime state untouched; Pi Loops has no uninstall lifecycle script that could delete user data. Use confirmed `/loops delete` operations or the documented Pi Loops data boundary before uninstalling if that state should be removed. Git branches, project files, and parent Pi transcripts remain outside package-uninstall cleanup.
+
 ## Configuration
 
 Configuration will be optional. Planned precedence is:
