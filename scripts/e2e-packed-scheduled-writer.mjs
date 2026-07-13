@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { localVitestInvocation, npmInvocation } from "./platform-command.mjs";
 
-const root = await mkdtemp(join(tmpdir(), "pi-loops-packed-scheduled-e2e-"));
+const root = await mkdtemp(join(tmpdir(), "pi loops packed scheduled e2e "));
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", shell: false, stdio: options.stdio ?? "pipe", env: options.env ?? process.env });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed\n${result.stdout ?? ""}\n${result.stderr ?? ""}`);

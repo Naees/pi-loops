@@ -82,14 +82,17 @@ function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
 }
 
 describe("controller repository writer lock", () => {
-  it("uses one canonical identity for a root, nested directory, symlink, and linked worktree", async () => {
+  it("uses one canonical identity for a root, nested directory, symlink or junction, mixed case, and linked worktree", async () => {
     const { root, repositoryRoot, linkedWorktree } = await repository();
     const alias = join(root, "repository-alias");
-    await symlink(repositoryRoot, alias);
+    await symlink(repositoryRoot, alias, process.platform === "win32" ? "junction" : "dir");
+    const mixedCaseRoot = repositoryRoot.replace(/[A-Za-z]/g, (character) =>
+      character === character.toUpperCase() ? character.toLowerCase() : character.toUpperCase());
     const identities = await Promise.all([
       resolveRepositoryLockIdentity(repositoryRoot),
       resolveRepositoryLockIdentity(join(repositoryRoot, "nested")),
       resolveRepositoryLockIdentity(alias),
+      ...(process.platform === "win32" ? [resolveRepositoryLockIdentity(mixedCaseRoot)] : []),
       resolveRepositoryLockIdentity(linkedWorktree),
     ]);
 

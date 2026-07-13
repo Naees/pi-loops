@@ -1,6 +1,6 @@
 # Pi Loops
 
-> **Status: attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6; Phase 4 production hardening is complete, Phase 5 platform qualification remains, and no public npm release exists yet.**
+> **Status: attended goals, scheduling, and proactive triggers are implemented and natively qualified on macOS, Linux, and Windows with Pi 0.80.6; no public npm release exists yet.**
 
 Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
@@ -22,6 +22,7 @@ Once published, it will require an existing working Pi installation with:
 - A trusted project.
 - The permissions needed by the requested coding task.
 - Git for isolated scheduled or proactive code-writing runs.
+- PowerShell 7 on Windows for kill-on-close Job Object lifecycle containment.
 
 No Pi Loops configuration will be required for normal use.
 
@@ -54,8 +55,8 @@ Goal loops run in the attended Pi session and current checkout. Scheduled and pr
 Pi Loops is delivered in phases:
 
 1. **Turn-based verification and attended goal loops — implemented:** bounded cycles, deterministic evidence, fresh evaluation, status, stop, interruption, and resume.
-2. **Scheduled loops — implemented:** trigger bounded goals at a time or interval while Pi is running (validated on macOS with Pi 0.80.6).
-3. **Proactive loops — implemented:** trigger confirmed bounded goals from project filesystem changes, other Pi extensions, or the model-facing tool while Pi is running (validated on macOS with Pi 0.80.6).
+2. **Scheduled loops — implemented:** trigger bounded goals at a time or interval while Pi is running (qualified on macOS, Linux, and Windows with Pi 0.80.6).
+3. **Proactive loops — implemented:** trigger confirmed bounded goals from project filesystem changes, other Pi extensions, or the model-facing tool while Pi is running (qualified on macOS, Linux, and Windows with Pi 0.80.6).
 
 ## Completion model
 
@@ -152,7 +153,7 @@ For isolated unattended work, Pi Loops starts a narrowly scoped child Pi process
 - Stop when cancelled or when the parent Pi exits.
 - Be prevented from recursively launching another Pi Loops child.
 
-The macOS/Pi 0.80.6 lifecycle gate verifies cancellation, crash cleanup, resume, descendant cleanup, and repeated forced-parent-death behavior. Linux and Windows require equivalent native evidence in Phase 5 before either platform is enabled.
+Native macOS, Linux, and Windows lifecycle gates with Pi 0.80.6 verify cancellation, crash cleanup, resume, descendant cleanup, and repeated forced-parent-death behavior. Windows workers additionally use a PowerShell 7 Job Object sentinel with kill-on-close containment.
 
 ## Optional `pi-subagents`
 
@@ -229,35 +230,35 @@ No project configuration file will be created automatically.
 - Completion contracts and bounded evidence.
 - Fresh evaluation, budgets, stall detection, persistence, leases, and retention.
 
-### Phase 2 — Scheduling (implemented for macOS/Pi 0.80.6)
+### Phase 2 — Scheduling (implemented)
 
 - One-off and recurring schedules.
 - Coalescing and project binding.
 - Worktree-isolated child execution.
 - Review branches and restart recovery.
 
-### Phase 3 — Proactive triggers (implemented for macOS/Pi 0.80.6)
+### Phase 3 — Proactive triggers (implemented)
 
 - Confirmed, project-contained filesystem triggers.
 - Namespaced Pi event-bus integration.
 - Model-facing firing of confirmed trigger definitions.
 - Debounce, coalescing, restart, and trigger-storm protection.
 
-### Phase 4 — Production hardening (complete for the validated macOS scope)
+### Phase 4 — Production hardening (complete)
 
 - State migrations and compatibility hardening.
 - Comprehensive security audit.
 - Supply-chain and package-content review.
 - Release automation and clean-install release candidates.
 
-### Phase 5 — Linux and Windows qualification
+### Phase 5 — Linux and Windows qualification (complete)
 
-- Complete the Linux and Windows portability pass after feature development is finished.
-- Run packed runtime, process-tree cleanup, Git isolation, locking, recovery, and upgrade tests on native Linux and Windows CI runners or VMs.
-- Enable and document each operating system only after its complete qualification matrix passes.
-- Perform the final clean-install and publication gate after cross-platform qualification.
+- Native Ubuntu 24.04 and Windows Server 2025 matrices cover the minimum and current supported Node lines.
+- Packed runtime, process-tree cleanup, Git isolation, locking, recovery, migration, and uninstall checks run on both platforms.
+- Real Pi 0.80.6 RPC lifecycle and proactive writer gates exercise native child cleanup and review branches.
+- Forced-parent-death cleanup is repeated 10 times per native lifecycle run.
 
-Physical devices are not required; native CI runners or VMs provide the required operating-system evidence. Until Phase 5 passes, unattended scheduling and proactive writing remain enabled only on the already validated macOS/Pi 0.80.6 combination.
+Physical devices are not required; native CI runners provide the operating-system evidence. The remaining work is the final clean-install and manual publication gate.
 
 Code will be reviewed and refactored between every phase rather than postponing cleanup until the end.
 
@@ -265,7 +266,7 @@ Code will be reviewed and refactored between every phase rather than postponing 
 
 Pi packages execute with the user's system permissions. Review package source before installation.
 
-The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Phase 4 adds automated production-dependency auditing, SPDX license review, CycloneDX SBOM validation, high-confidence tracked-secret scanning, static analysis, and non-publishing release-candidate artifacts. Scheduled and proactive child launch is enabled only on the validated macOS/Pi 0.80.6 combination; other platforms remain fail-closed pending equivalent lifecycle evidence.
+The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Phase 4 adds automated production-dependency auditing, SPDX license review, CycloneDX SBOM validation, high-confidence tracked-secret scanning, static analysis, and non-publishing release-candidate artifacts. Scheduled and proactive child launch is enabled on the natively qualified macOS, Linux, and Windows/Pi 0.80.6 combinations; unknown platforms remain fail-closed.
 
 Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. A comprehensive vulnerability and supply-chain assessment remains required before release.
 
@@ -273,7 +274,7 @@ Report security issues through the private process documented in [`SECURITY.md`]
 
 ## Project status
 
-The product contract and architecture are approved. Attended goals, scheduling, proactive triggers, and Phase 4 production hardening are complete for macOS/Pi 0.80.6. Linux/Windows qualification and the final publication gate remain Phase 5 work. No public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended goals, scheduling, proactive triggers, production hardening, and native Linux/Windows qualification are complete for Pi 0.80.6. The final publication gate remains. No public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 

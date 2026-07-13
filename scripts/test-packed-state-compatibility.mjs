@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { localVitestInvocation, npmInvocation } from "./platform-command.mjs";
 
-const root = await mkdtemp(join(tmpdir(), "pi-loops-packed-state-"));
+const root = await mkdtemp(join(tmpdir(), "pi loops packed state "));
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { npmInvocation, piInvocation } from "./platform-command.mjs";
 
 const sourcePiHome = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-loops-attended-e2e-"));
+const temporaryRoot = await mkdtemp(join(tmpdir(), "pi loops attended e2e "));
 const temporaryPiHome = join(temporaryRoot, "pi-home");
 const project = join(temporaryRoot, "project");
 const piCommand = piInvocation();

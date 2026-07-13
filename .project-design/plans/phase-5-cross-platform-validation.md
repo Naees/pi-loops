@@ -1,9 +1,9 @@
 # Phase 5 — Linux and Windows qualification and release
 
-**Status:** Ready to begin after Phase 4 completion on 2026-07-13. No Linux or Windows unattended support is enabled yet.
+**Status:** Native Linux and Windows qualification completed on 2026-07-13. Production enablement and the final gate are being re-run from the packed candidate.
 
 **Timing:** Final phase, after Phase 3 feature development and Phase 4 production hardening are complete.  
-**Current support boundary:** Unattended scheduled writing remains enabled only on the validated macOS/Pi 0.80.6 combination.  
+**Current support boundary:** Unattended scheduled and proactive writing is enabled on the independently qualified macOS, Linux, and Windows/Pi 0.80.6 combinations; unknown platforms remain fail-closed.
 **Execution environments:** Native Linux and Windows CI runners or VMs; physical devices are not required.
 
 ## Objective

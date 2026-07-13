@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - if: matrix.node == '22.19.0'
+        run: npm run test:coverage
+      - if: matrix.node == '22.19.0'
         run: npm run security:check
       - if: matrix.node == '22.19.0'
         run: npm run pack:inspect

@@ -18,4 +18,4 @@ Phase 4 security automation validates production dependency advisories, reviewed
 
 ## Release requirements
 
-A public release is blocked by unresolved critical or high-severity findings, an unproven child-process cleanup guarantee, unintended files in the npm tarball, an unclean release tree, or failure of the authenticated macOS runtime gates. Linux and Windows support additionally requires the native Phase 5 qualification matrix for each platform.
+A public release is blocked by unresolved critical or high-severity findings, an unproven child-process cleanup guarantee, unintended files in the npm tarball, an unclean release tree, or failure of the authenticated macOS, Linux, or Windows runtime gates.

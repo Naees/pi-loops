@@ -28,7 +28,7 @@ describe("Windows deadline sentinel", () => {
     }) as unknown as typeof spawnType;
 
     const sentinel = launchWindowsDeadlineSentinel(123, Date.now() + 60_000, {
-      environment: { ProgramFiles: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" },
+      environment: { PROGRAMFILES: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" },
       spawn: implementation,
     });
     await sentinel.ready;
@@ -47,7 +47,7 @@ describe("Windows deadline sentinel", () => {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: expect.objectContaining({ ProgramFiles: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" }),
+      env: expect.objectContaining({ PROGRAMFILES: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" }),
     }));
     expect(childUnref).not.toHaveBeenCalled();
     expect(stdoutUnref).not.toHaveBeenCalled();

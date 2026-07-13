@@ -22,7 +22,7 @@ async function packedImport(path: string) {
 }
 
 test("packed scheduled writer isolates and retains review output", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-loops-packed-scheduled-runtime-"));
+  const root = await mkdtemp(join(tmpdir(), "pi loops packed scheduled runtime "));
   temporary.push(root);
   const repository = join(root, "repository");
   git(root, ["init", "-q", repository]);
@@ -32,11 +32,13 @@ test("packed scheduled writer isolates and retains review output", async () => {
   git(repository, ["config", "user.name", "Pi Loops E2E"]);
   git(repository, ["config", "user.email", "e2e@example.invalid"]);
 
-  const [{ UnattendedRunController }, { createProjectId }, { RunStore }] = await Promise.all([
+  const [{ UnattendedRunController }, { createProjectId }, { RunStore }, { QUALIFIED_UNATTENDED_PLATFORMS }] = await Promise.all([
     packedImport("src/controller/unattended-run-controller.ts"),
     packedImport("src/shared/ids.ts"),
     packedImport("src/storage/run-store.ts"),
+    packedImport("src/worker/rpc-worker-manager.ts"),
   ]);
+  expect(QUALIFIED_UNATTENDED_PLATFORMS).toContain(process.platform);
   const projectRoot = await realpath(repository);
   const projectId = createProjectId(projectRoot);
   const dataRoot = join(root, "data");
@@ -87,7 +89,7 @@ test("packed scheduled writer isolates and retains review output", async () => {
 });
 
 test("packed proactive writer isolates and retains review output", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-loops-packed-proactive-runtime-"));
+  const root = await mkdtemp(join(tmpdir(), "pi loops packed proactive runtime "));
   temporary.push(root);
   const repository = join(root, "repository");
   git(root, ["init", "-q", repository]);

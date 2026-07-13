@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { findForbiddenPackagePaths, findMissingPackagePaths, REQUIRED_PACKAGE_PATHS } from "./package-boundary.mjs";
 import { npmInvocation, piInvocation } from "./platform-command.mjs";
 
-const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-loops-packed-"));
+const temporaryRoot = await mkdtemp(join(tmpdir(), "pi loops packed "));
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {

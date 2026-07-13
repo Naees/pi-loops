@@ -26,7 +26,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Non-publishing macOS release-candidate automation, minimum/current Node CI, CodeQL analysis, dependency review, package artifacts, and checksums.
 - Explicit sequential stored-state migration infrastructure, frozen version-one compatibility fixtures, and packed upgrade/uninstall/reinstall validation.
 - Packaged operations and strict integration documentation, public/provenance publish metadata, checksummed package inventories, and a non-publishing npm publication dry-run gate.
-- Phase 5 native Linux and Windows qualification workflow, cross-platform lifecycle harness, and bounded process-tree termination primitives; production enablement remains separately gated pending native evidence.
+- Phase 5 native Linux and Windows qualification workflow, cross-platform lifecycle harness, bounded process-tree termination, and Windows kill-on-close Job Object containment; unattended production execution is enabled on the three independently qualified platforms.
 
 ### Changed
 

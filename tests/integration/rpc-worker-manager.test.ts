@@ -364,8 +364,9 @@ process.stdin.on("data", chunk => {
     }
   });
 
-  it.each(["linux", "win32"] as const)("fails closed on unqualified platform %s", async (platform) => {
-    expect(QUALIFIED_UNATTENDED_PLATFORMS).not.toContain(platform);
+  it("enables only the three independently qualified production platforms", async () => {
+    expect(QUALIFIED_UNATTENDED_PLATFORMS).toEqual(["darwin", "linux", "win32"]);
+    const platform: NodeJS.Platform = "freebsd";
     const manager = new RpcWorkerManager({ platform });
     await expect(manager.launch({
       runId: "run_1234abcd",

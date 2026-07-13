@@ -152,7 +152,7 @@ async function createWorktree(root: string): Promise<{ repository: string; workt
 }
 
 async function runLifecycleScenarios(command: PiCommand): Promise<Record<string, unknown>> {
-  const root = await mkdtemp(join(tmpdir(), "pi-loops-rpc-lifecycle-"));
+  const root = await mkdtemp(join(tmpdir(), "pi loops rpc lifecycle "));
   const sessionDirectory = join(root, "sessions");
   const pidFile = join(root, "descendants.json");
   const sentinelStatusFile = join(root, "sentinel-status.json");
@@ -374,7 +374,7 @@ async function runParentScenario(
   termination: ParentTermination,
   iteration: number,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), `pi-loops-parent-${termination.toLowerCase()}-`));
+  const root = await mkdtemp(join(tmpdir(), `pi loops parent ${termination.toLowerCase()} `));
   const stateFile = join(root, "parent-state.json");
   const pidFile = join(root, "descendants.json");
   const sentinelStatusFile = join(root, "sentinel-status.json");

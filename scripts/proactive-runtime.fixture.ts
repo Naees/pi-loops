@@ -7,7 +7,7 @@ import { UnattendedRunController } from "../src/controller/unattended-run-contro
 import { createProjectId } from "../src/shared/ids.ts";
 import { RunStore } from "../src/storage/run-store.ts";
 import { TriggerController } from "../src/triggers/controller.ts";
-import { RpcWorkerManager } from "../src/worker/rpc-worker-manager.ts";
+import { QUALIFIED_UNATTENDED_PLATFORMS, RpcWorkerManager } from "../src/worker/rpc-worker-manager.ts";
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8", shell: false });
@@ -26,7 +26,7 @@ async function waitFor<T>(read: () => Promise<T | undefined>, timeoutMs: number)
 }
 
 test("real proactive runtime preserves the active checkout and retains review output", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-loops-proactive-runtime-e2e-"));
+  const root = await mkdtemp(join(tmpdir(), "pi loops proactive runtime e2e "));
   try {
   const repository = join(root, "repository");
   git(root, ["init", "-q", repository]);
@@ -48,7 +48,7 @@ test("real proactive runtime preserves the active checkout and retains review ou
   const workers = new RpcWorkerManager({
     ...(qualificationPlatform === process.platform ? {
       platform: process.platform,
-      qualifiedPlatforms: [process.platform],
+      ...(QUALIFIED_UNATTENDED_PLATFORMS.includes(process.platform) ? {} : { qualifiedPlatforms: [process.platform] }),
       qualification: {
         extensionPaths: [resolve("scripts/fixtures/rpc-lifecycle-extension.ts")],
         provider: "pi-loops-lifecycle",

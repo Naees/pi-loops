@@ -24,6 +24,14 @@ function environmentValue(environment: NodeJS.ProcessEnv, ...names: readonly str
   return undefined;
 }
 
+export function resolveWindowsDeadlineSentinelExecutable(environment: NodeJS.ProcessEnv = process.env): string {
+  const programFiles = environmentValue(environment, "ProgramW6432", "ProgramFiles");
+  if (!programFiles || !win32.isAbsolute(programFiles)) {
+    throw new Error("Windows deadline sentinel requires an absolute Program Files root");
+  }
+  return win32.join(programFiles, "PowerShell", "7", "pwsh.exe");
+}
+
 export function launchWindowsDeadlineSentinel(
   targetPid: number,
   absoluteDeadlineMs: number,
@@ -38,11 +46,7 @@ export function launchWindowsDeadlineSentinel(
   }
 
   const environment = options.environment ?? process.env;
-  const programFiles = environmentValue(environment, "ProgramW6432", "ProgramFiles");
-  if (!programFiles || !win32.isAbsolute(programFiles)) {
-    throw new Error("Windows deadline sentinel requires an absolute Program Files root");
-  }
-  const executable = win32.join(programFiles, "PowerShell", "7", "pwsh.exe");
+  const executable = resolveWindowsDeadlineSentinelExecutable(environment);
   const script = fileURLToPath(new URL("./windows-job-sentinel.ps1", import.meta.url));
   const implementation = options.spawn ?? spawn;
   const child: ChildProcess = implementation(executable, [

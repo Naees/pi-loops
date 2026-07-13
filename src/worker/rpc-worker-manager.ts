@@ -10,7 +10,7 @@ import { sanitizedGitEnvironment } from "./git-environment.js";
 import { CHILD_DEADLINE_ENV, CHILD_MARKER_ENV } from "./watchdog.js";
 
 const SUPPORTED_PI_VERSION = "0.80.6";
-export const QUALIFIED_UNATTENDED_PLATFORMS: readonly NodeJS.Platform[] = Object.freeze(["darwin"]);
+export const QUALIFIED_UNATTENDED_PLATFORMS: readonly NodeJS.Platform[] = Object.freeze(["darwin", "linux", "win32"]);
 
 export class WorkerInteractionRequiredError extends Error {
   constructor(message: string) {

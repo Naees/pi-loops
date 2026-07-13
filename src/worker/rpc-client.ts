@@ -1,7 +1,11 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 // Production lifecycle scripts load this module with Node's native TypeScript runner, which requires real .ts specifiers.
 import { asError } from "../shared/errors.ts";
-import { launchWindowsDeadlineSentinel, type DeadlineSentinel } from "./deadline-sentinel.ts";
+import {
+  launchWindowsDeadlineSentinel,
+  resolveWindowsDeadlineSentinelExecutable,
+  type DeadlineSentinel,
+} from "./deadline-sentinel.ts";
 import { terminateProcessTree } from "./process-tree.ts";
 import { RpcJsonlDecoder } from "./rpc-jsonl.ts";
 
@@ -84,6 +88,11 @@ export class RpcWorkerClient {
     this.#maxRetainedEvents = positive(options.maxRetainedEvents, 10_000, "maxRetainedEvents");
     this.#platform = options.platform ?? process.platform;
     this.#terminateProcessTree = options.terminateProcessTree ?? ((pid, force) => terminateProcessTree(pid, { force, platform: this.#platform }));
+    const shouldLaunchSentinel = this.#platform === "win32" && options.absoluteDeadlineMs !== undefined &&
+      (process.platform === "win32" || options.launchDeadlineSentinel !== undefined);
+    if (shouldLaunchSentinel && options.launchDeadlineSentinel === undefined) {
+      resolveWindowsDeadlineSentinelExecutable(options.environment);
+    }
     const decoder = new RpcJsonlDecoder({ maxLineBytes: positive(options.maxLineBytes, 1024 * 1024, "maxLineBytes") });
     this.child = spawn(options.executable, [...options.args], {
       cwd: options.cwd,
@@ -124,8 +133,6 @@ export class RpcWorkerClient {
     this.child.once("error", (error) => this.#fail(error));
     this.child.stdin.on("error", (error) => this.#fail(error));
 
-    const shouldLaunchSentinel = this.#platform === "win32" && options.absoluteDeadlineMs !== undefined &&
-      (process.platform === "win32" || options.launchDeadlineSentinel !== undefined);
     const sentinelFactory = options.launchDeadlineSentinel ?? ((pid: number, deadlineMs: number, onError: (error: Error) => void) =>
       launchWindowsDeadlineSentinel(pid, deadlineMs, {
         environment: options.environment,
