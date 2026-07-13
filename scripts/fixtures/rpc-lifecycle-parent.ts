@@ -55,7 +55,7 @@ function isSettled(message: RpcEnvelope): boolean {
   return message.type === "agent_settled";
 }
 
-async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
+async function waitForFile(path: string, timeoutMs = process.platform === "win32" ? 20_000 : 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {

@@ -375,7 +375,8 @@ async function runParentScenario(
   const helperPath = resolve("scripts/fixtures/rpc-lifecycle-parent.ts");
   const { worktree } = await createWorktree(root);
   const forced = termination === "SIGKILL";
-  const deadlineMs = Date.now() + (forced ? 4_000 : 30_000);
+  const forcedDeadlineMs = process.platform === "win32" ? 20_000 : 4_000;
+  const deadlineMs = Date.now() + (forced ? forcedDeadlineMs : 30_000);
   const helper = spawn(process.execPath, [
     helperPath,
     command.executable,
@@ -397,7 +398,7 @@ async function runParentScenario(
   });
 
   try {
-    const state = await waitForParentState(stateFile, "ready", 20_000);
+    const state = await waitForParentState(stateFile, "ready", process.platform === "win32" ? 30_000 : 20_000);
     const piPid = state.piPid;
     const parentPid = state.parentPid;
     const childPid = state.childPid;

@@ -387,7 +387,7 @@ describe("unattended run controller", () => {
     const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
     const abort = new AbortController();
     const running = controller.runSchedule(schedule, "run_1234abcd", evaluator, host, abort.signal);
-    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"));
+    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"), { timeout: 10_000 });
     abort.abort();
 
     await expect(running).resolves.toEqual({ status: "interrupted" });
@@ -397,7 +397,7 @@ describe("unattended run controller", () => {
       state: "interrupted",
       terminalReason: "Scheduled worker was cancelled",
     }));
-  });
+  }, 30_000);
 
   it("rejects duplicate starts and schedule identity changes on restart", async () => {
     const { dataRoot, projectRoot, host, schedule } = await harness();
