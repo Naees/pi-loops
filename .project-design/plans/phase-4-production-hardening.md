@@ -86,7 +86,7 @@ Turn the implemented feature set into a reviewable release candidate without wid
 
 ## Progress
 
-### 2026-07-13 — release and supply-chain baseline implemented locally
+### 2026-07-13 — release and supply-chain baseline implemented and validated
 
 - Added production dependency audit policy, explicit MIT/ISC production-license allowlist, CycloneDX SBOM validation/output, bounded high-confidence tracked-secret scanning, and focused policy tests.
 - Added a non-publishing release-candidate command and strengthened the final release gate to require a clean tree plus authenticated macOS runtime and process-lifecycle checks.
@@ -94,7 +94,8 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Updated public status, security, changelog, and contributor documentation for Phase 4.
 - Local non-runtime and authenticated macOS runtime release-candidate gates passed, including forced parent death 10/10.
 - The first hosted run exposed an npm 10 clean-install lockfile incompatibility (`@emnapi/core`/`@emnapi/runtime` were absent). The lockfile was regenerated with npm 10.9.3; the hosted Node 22.19, Node 24, package, SBOM, and CodeQL jobs then passed.
-- CodeQL reported one medium test-only code-sanitization finding where a serialized fixture was interpolated into `node -e` source. The fixture now crosses the child boundary as data through a dedicated environment value; focused tests pass and hosted CodeQL revalidation is required to close the alert.
+- CodeQL reported one medium test-only code-sanitization finding where a serialized fixture was interpolated into `node -e` source. The fixture now crosses the child boundary as data through a dedicated environment value; hosted CodeQL revalidation passed with zero open alerts.
+- Hosted CI is green on Node 22.19 and Node 24, including clean install, the complete suite, security policy, packed install, packed unattended fixtures, SBOM generation, tarball creation, and artifact upload. Delivery slice 1 is closed.
 
 ## Initial disposition
 
