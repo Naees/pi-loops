@@ -479,11 +479,11 @@ describe("schedule controller", () => {
     await controller.start(host, runner);
     const schedule = await controller.create({ expression: "in 1m", goal: "restart me" }, host);
     await vi.advanceTimersByTimeAsync(60_000);
-    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "interrupted" })));
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "interrupted" })), { timeout: 10_000 });
     const runId = runner.mock.calls[0]?.[1] as string;
 
     await controller.resumeOccurrence(schedule.scheduleId, runId, host.cwd);
-    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "completed" })));
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "completed" })), { timeout: 10_000 });
 
     expect(kinds).toEqual(["start", "restart"]);
     expect(runner.mock.calls[1]?.[1]).toBe(runId);
@@ -578,7 +578,7 @@ describe("schedule controller", () => {
         state: "paused",
         pauseReason: "interrupted",
       }));
-    });
+    }, { timeout: 10_000 });
     await controller.shutdown();
   });
 

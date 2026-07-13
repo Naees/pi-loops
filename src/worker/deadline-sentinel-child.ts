@@ -19,9 +19,13 @@ function targetExists(pid: number): boolean {
 
 const targetPid = positiveInteger(process.argv[2], "target PID");
 const absoluteDeadlineMs = positiveInteger(process.argv[3], "absolute deadline");
+// Win32 child processes can be reparented as soon as Pi begins its own
+// deadline shutdown. Snapshot and terminate the intact tree first, while
+// retaining the final second as the bounded shutdown margin.
+const terminationAtMs = Math.max(Date.now(), absoluteDeadlineMs - 1_000);
 
 while (targetExists(targetPid)) {
-  const remainingMs = absoluteDeadlineMs - Date.now();
+  const remainingMs = terminationAtMs - Date.now();
   if (remainingMs <= 0) {
     await terminateProcessTree(targetPid, { platform: "win32", force: true });
     break;
