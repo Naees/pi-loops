@@ -104,7 +104,8 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Store loads validate prepared records and may persist migrated output only while holding the relevant mutation lease, using the existing bounded atomic-write path. Focused tests prove unlocked loads cannot rewrite migration output.
 - Frozen version-one fixtures now cover runs, schedules, triggers, resolved configuration, and notices. Lease records remain ephemeral ownership metadata: the authoritative live lock must never be migrated or taken over by package upgrade code.
 - Added a packed compatibility gate that installs the tarball, reads all frozen state without rewriting it, rejects newer versions without mutation, installs over the existing package, uninstalls, reinstalls, and proves package operations preserve user runtime state while uninstall removes package files.
-- Local typechecks, 59 test files / 348 tests, 93.08% line coverage, focused store/migration tests, packed upgrade/uninstall/reinstall, and the complete authenticated macOS runtime release-candidate gate pass. Hosted Node 22.19/current package revalidation remains required before delivery slice 2 is closed.
+- Local typechecks, 59 test files / 348 tests, 93.08% line coverage, focused store/migration tests, packed upgrade/uninstall/reinstall, and the complete authenticated macOS runtime release-candidate gate pass.
+- Hosted Node 22.19 and Node 24 CI, packed state compatibility, package artifacts, and CodeQL passed at `629951c` with zero open code-scanning alerts. Delivery slice 2 is closed.
 
 ## Initial disposition
 
