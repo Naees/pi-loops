@@ -26,6 +26,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Non-publishing macOS release-candidate automation, minimum/current Node CI, CodeQL analysis, dependency review, package artifacts, and checksums.
 - Explicit sequential stored-state migration infrastructure, frozen version-one compatibility fixtures, and packed upgrade/uninstall/reinstall validation.
 - Packaged operations and strict integration documentation, public/provenance publish metadata, checksummed package inventories, and a non-publishing npm publication dry-run gate.
+- Phase 5 native Linux and Windows qualification workflow, cross-platform lifecycle harness, and bounded process-tree termination primitives; production enablement remains separately gated pending native evidence.
 
 ### Changed
 
@@ -35,6 +36,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Bounded event ingress, error notifications, filesystem watcher admission, JSON record reads, and per-project trigger definitions; coordinated shutdown now attempts every safety cleanup before reporting failures.
 - Pinned every external GitHub Action to a tested immutable commit and made mutable workflow references fail the security policy.
 - Split extension hosts, routing, trigger-event relay, trigger ingress, and unattended definition/restart logic into focused internal modules; centralized repeated ID allocation, lease scoping, and record validation.
+- Release and packed-package scripts now launch npm, Vitest, and Pi through argument arrays and JavaScript entry points instead of platform-specific command shims.
 
 ### Fixed
 

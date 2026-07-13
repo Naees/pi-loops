@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { errorMessage } from "../shared/errors.js";
 import { isRunId } from "../shared/ids.js";
 import { sanitizedGitEnvironment } from "./git-environment.js";
+import { terminateProcessTree } from "./process-tree.js";
 
 const GIT_TIMEOUT_MS = 30_000;
 const MAX_GIT_OUTPUT_BYTES = 1024 * 1024;
@@ -69,29 +70,52 @@ export interface FinalizedReviewBranch {
 }
 
 async function runGit(args: readonly string[], cwd: string, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) throw new DOMException("Git command aborted", "AbortError");
   return new Promise((resolveCommand, rejectCommand) => {
     const child = spawn("git", [...args], {
       cwd,
       env: sanitizedGitEnvironment(),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       windowsHide: true,
-      signal,
     });
     let stdout: Buffer = Buffer.alloc(0);
     let stderr: Buffer = Buffer.alloc(0);
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const onAbort = (): void => {
+      const pid = child.pid;
+      if (!pid) {
+        finish(() => rejectCommand(new DOMException("Git command aborted", "AbortError")));
+        return;
+      }
+      void terminateProcessTree(pid, { force: true }).catch(() => undefined).finally(() => {
+        finish(() => rejectCommand(new DOMException("Git command aborted", "AbortError")));
+      });
+    };
     const finish = (operation: () => void): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       operation();
     };
+    const stopWith = (error: Error): void => {
+      const pid = child.pid;
+      if (!pid) {
+        finish(() => rejectCommand(error));
+        return;
+      }
+      void terminateProcessTree(pid, { force: true }).catch(() => undefined).finally(() => {
+        finish(() => rejectCommand(error));
+      });
+    };
     const append = (current: Buffer, chunk: Buffer): Buffer => {
+      if (settled) return current;
       const combined = Buffer.concat([current, chunk]);
       if (combined.byteLength > MAX_GIT_OUTPUT_BYTES) {
-        child.kill("SIGKILL");
-        finish(() => rejectCommand(new Error(`Git output exceeds ${MAX_GIT_OUTPUT_BYTES} bytes`)));
+        stopWith(new Error(`Git output exceeds ${MAX_GIT_OUTPUT_BYTES} bytes`));
       }
       return combined.subarray(0, MAX_GIT_OUTPUT_BYTES);
     };
@@ -107,9 +131,10 @@ async function runGit(args: readonly string[], cwd: string, signal?: AbortSignal
       if (code !== 0) rejectCommand(new GitCommandError(args, errorText));
       else resolveCommand(stdout.toString("utf8").trim());
     }));
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(() => rejectCommand(new Error(`git ${args[0] ?? "command"} timed out after ${GIT_TIMEOUT_MS}ms`)));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    timer = setTimeout(() => {
+      stopWith(new Error(`git ${args[0] ?? "command"} timed out after ${GIT_TIMEOUT_MS}ms`));
     }, GIT_TIMEOUT_MS);
   });
 }

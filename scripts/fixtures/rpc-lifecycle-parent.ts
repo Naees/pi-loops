@@ -6,16 +6,21 @@ import { RpcSpikeClient, type RpcEnvelope } from "./rpc-spike-client.ts";
 
 function requiredArgument(index: number): string {
   const value = process.argv[index + 2];
-  if (!value) throw new Error("Usage: rpc-lifecycle-parent <pi> <cwd> <session-dir> <state-file> <pid-file> <deadline-ms>");
+  if (!value) throw new Error("Usage: rpc-lifecycle-parent <executable> <args-prefix-json> <cwd> <session-dir> <state-file> <pid-file> <deadline-ms>");
   return value;
 }
 
 const executable = requiredArgument(0);
-const cwd = requiredArgument(1);
-const sessionDirectory = requiredArgument(2);
-const stateFile = requiredArgument(3);
-const pidFile = requiredArgument(4);
-const deadlineMs = Number(requiredArgument(5));
+const parsedArgsPrefix = JSON.parse(requiredArgument(1)) as unknown;
+if (!Array.isArray(parsedArgsPrefix) || !parsedArgsPrefix.every((value) => typeof value === "string")) {
+  throw new Error("Parent helper requires a string launch-prefix array");
+}
+const argsPrefix = parsedArgsPrefix;
+const cwd = requiredArgument(2);
+const sessionDirectory = requiredArgument(3);
+const stateFile = requiredArgument(4);
+const pidFile = requiredArgument(5);
+const deadlineMs = Number(requiredArgument(6));
 if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now()) throw new Error("Parent helper requires a future deadline");
 
 const extensionPath = resolve("scripts/fixtures/rpc-lifecycle-extension.ts");
@@ -32,7 +37,7 @@ const args = [
   "--model", "controlled",
   "--session-dir", sessionDirectory,
 ];
-const client = new RpcSpikeClient(executable, args, {
+const client = new RpcSpikeClient(executable, [...argsPrefix, ...args], {
   cwd,
   env: {
     ...process.env,
@@ -63,7 +68,7 @@ async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
   throw new Error(`Timed out waiting for ${path}`);
 }
 
-async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
+async function shutdown(signal: "normal" | "SIGINT" | "SIGTERM"): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   if (keepAlive) clearInterval(keepAlive);
@@ -73,15 +78,21 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     await client.waitFor(isSettled, { after: checkpoint, timeoutMs: 2_000 }).catch(() => undefined);
     await client.stop(1_000);
     await writeFile(stateFile, JSON.stringify({ phase: "stopped", signal, helperPid: process.pid }), "utf8");
+    process.stdin.destroy();
     process.exitCode = 0;
   } catch (error) {
     await writeFile(stateFile, JSON.stringify({ phase: "failed", signal, error: error instanceof Error ? error.message : String(error) }), "utf8").catch(() => undefined);
+    process.stdin.destroy();
     process.exitCode = 1;
   }
 }
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk: string) => {
+  if (chunk.split(/\r?\n/).includes("shutdown")) void shutdown("normal");
+});
 
 try {
   await client.send({ type: "get_state" });

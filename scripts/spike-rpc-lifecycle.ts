@@ -22,16 +22,32 @@ function run(command: string, args: readonly string[], cwd?: string): string {
   return result.stdout.trim();
 }
 
-async function resolvePiExecutable(): Promise<string> {
-  if (process.platform !== "darwin") {
-    throw new Error(`The lifecycle spike currently records macOS evidence only; received ${process.platform}`);
+interface PiCommand {
+  readonly executable: string;
+  readonly argsPrefix: readonly string[];
+  readonly version: string;
+}
+
+async function resolvePiCommand(): Promise<PiCommand> {
+  if (!["darwin", "linux", "win32"].includes(process.platform)) {
+    throw new Error(`The lifecycle qualification does not support ${process.platform}`);
   }
-  const candidate = process.env.PI_LOOPS_SPIKE_PI ?? "/opt/homebrew/bin/pi";
-  const executable = await realpath(candidate);
-  await access(executable);
-  const version = run(executable, ["--version"]);
-  assert(/^0\.80\.6(?:\s|$)/.test(version), `Lifecycle spike requires explicitly validated Pi 0.80.6, received: ${version}`);
-  return executable;
+  const requested = process.env.PI_LOOPS_SPIKE_PI ?? process.env.PI_LOOPS_TEST_PI;
+  const candidate = await realpath(requested ?? join(
+    process.cwd(),
+    "node_modules",
+    "@earendil-works",
+    "pi-coding-agent",
+    "dist",
+    "cli.js",
+  ));
+  await access(candidate);
+  const isNodeCli = candidate.replaceAll("\\", "/").toLowerCase().endsWith("/dist/cli.js");
+  const executable = isNodeCli ? await realpath(process.execPath) : candidate;
+  const argsPrefix = isNodeCli ? [candidate] : [];
+  const version = run(executable, [...argsPrefix, "--version"]);
+  assert(/^0\.80\.6(?:\s|$)/.test(version), `Lifecycle qualification requires explicitly validated Pi 0.80.6, received: ${version}`);
+  return { executable, argsPrefix, version };
 }
 
 function isType(type: string): (message: RpcEnvelope) => boolean {
@@ -121,7 +137,7 @@ async function createWorktree(root: string): Promise<{ repository: string; workt
   return { repository, worktree };
 }
 
-async function runLifecycleScenarios(executable: string): Promise<Record<string, unknown>> {
+async function runLifecycleScenarios(command: PiCommand): Promise<Record<string, unknown>> {
   const root = await mkdtemp(join(tmpdir(), "pi-loops-rpc-lifecycle-"));
   const sessionDirectory = join(root, "sessions");
   const pidFile = join(root, "descendants.json");
@@ -136,7 +152,7 @@ async function runLifecycleScenarios(executable: string): Promise<Record<string,
     PI_LOOPS_CHILD_DEADLINE_MS: String(Date.now() + 120_000),
     PI_LOOPS_SPIKE_PID_FILE: pidFile,
   };
-  const client = new RpcSpikeClient(executable, args, { cwd: worktree, env: environment });
+  const client = new RpcSpikeClient(command.executable, [...command.argsPrefix, ...args], { cwd: worktree, env: environment });
 
   try {
     const initialState = responseData(await client.send({ type: "get_state" }));
@@ -235,7 +251,7 @@ async function runLifecycleScenarios(executable: string): Promise<Record<string,
     ]);
     assert(firstExit.code === 0, `First RPC child exited unsuccessfully: ${JSON.stringify(firstExit)}\nstderr:\n${client.stderr}`);
 
-    const resumed = new RpcSpikeClient(executable, [...args, "--session", sessionFile], { cwd: worktree, env: environment });
+    const resumed = new RpcSpikeClient(command.executable, [...command.argsPrefix, ...args, "--session", sessionFile], { cwd: worktree, env: environment });
     try {
       const resumedState = responseData(await resumed.send({ type: "get_state" }));
       assert(resumedState.sessionId === sessionId, "Resumed RPC child loaded a different session ID");
@@ -251,9 +267,9 @@ async function runLifecycleScenarios(executable: string): Promise<Record<string,
 
     return {
       platform: process.platform,
-      executable,
-      executableName: basename(executable),
-      piVersion: run(executable, ["--version"]),
+      executable: command.executable,
+      executableName: basename(command.executable),
+      piVersion: command.version,
       worktree: "isolated temporary Git worktree",
       currentPiExecutableResolution: "passed",
       controlledPromptAndSettled: "passed",
@@ -310,22 +326,47 @@ function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<{ cod
   });
 }
 
+type ParentTermination = "normal" | "SIGINT" | "SIGTERM" | "SIGKILL";
+
+function processCommandLine(pid: number): string {
+  if (process.platform === "win32") {
+    return run("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `(Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\").CommandLine`,
+    ]);
+  }
+  return run("ps", ["-p", String(pid), "-o", "command="]);
+}
+
 async function runParentScenario(
-  executable: string,
-  signal: "SIGINT" | "SIGTERM" | "SIGKILL",
+  command: PiCommand,
+  termination: ParentTermination,
   iteration: number,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), `pi-loops-parent-${signal.toLowerCase()}-`));
+  const root = await mkdtemp(join(tmpdir(), `pi-loops-parent-${termination.toLowerCase()}-`));
   const stateFile = join(root, "parent-state.json");
   const pidFile = join(root, "descendants.json");
   const sessionDirectory = join(root, "sessions");
   const helperPath = resolve("scripts/fixtures/rpc-lifecycle-parent.ts");
   const { worktree } = await createWorktree(root);
-  const deadlineMs = Date.now() + (signal === "SIGKILL" ? 4_000 : 30_000);
-  const helper = spawn(process.execPath, [helperPath, executable, worktree, sessionDirectory, stateFile, pidFile, String(deadlineMs)], {
+  const forced = termination === "SIGKILL";
+  const deadlineMs = Date.now() + (forced ? 4_000 : 30_000);
+  const helper = spawn(process.execPath, [
+    helperPath,
+    command.executable,
+    JSON.stringify(command.argsPrefix),
+    worktree,
+    sessionDirectory,
+    stateFile,
+    pidFile,
+    String(deadlineMs),
+  ], {
     cwd: process.cwd(),
     shell: false,
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["pipe", "ignore", "pipe"],
+    windowsHide: true,
   });
   let stderr = "";
   helper.stderr?.on("data", (chunk: Buffer) => {
@@ -343,18 +384,21 @@ async function runParentScenario(
       typeof childPid === "number" && Number.isSafeInteger(childPid),
       `Parent helper returned invalid PIDs: ${JSON.stringify(state)}`,
     );
-    const processCommand = run("ps", ["-p", String(piPid), "-o", "command="]);
-    assert(!processCommand.includes("PI_LOOPS_SPIKE_TOOL"), "Task prompt leaked into the Pi child process arguments");
+    assert(!processCommandLine(piPid).includes("PI_LOOPS_SPIKE_TOOL"), "Task prompt leaked into the Pi child process arguments");
 
-    assert(helper.kill(signal), `Could not send ${signal} to lifecycle parent helper`);
-    const helperExit = await waitForChildExit(helper, signal === "SIGKILL" ? 5_000 : 10_000);
-    if (signal === "SIGKILL") {
-      assert(helperExit.signal === "SIGKILL", `Forced parent exited unexpectedly: ${JSON.stringify(helperExit)} stderr=${stderr}`);
+    if (termination === "normal") {
+      helper.stdin?.end("shutdown\n");
     } else {
-      assert(helperExit.code === 0, `${signal} parent shutdown failed: ${JSON.stringify(helperExit)} stderr=${stderr}`);
+      assert(helper.kill(termination), `Could not send ${termination} to lifecycle parent helper`);
+    }
+    const helperExit = await waitForChildExit(helper, forced ? 5_000 : 10_000);
+    if (forced && process.platform !== "win32") {
+      assert(helperExit.signal === "SIGKILL", `Forced parent exited unexpectedly: ${JSON.stringify(helperExit)} stderr=${stderr}`);
+    } else if (!forced) {
+      assert(helperExit.code === 0, `${termination} parent shutdown failed: ${JSON.stringify(helperExit)} stderr=${stderr}`);
     }
 
-    const cleanupTimeoutMs = signal === "SIGKILL" ? Math.max(1_000, deadlineMs - Date.now() + 4_000) : 5_000;
+    const cleanupTimeoutMs = forced ? Math.max(1_000, deadlineMs - Date.now() + 4_000) : 5_000;
     await Promise.all([
       waitForProcessExit(piPid, cleanupTimeoutMs),
       waitForProcessExit(parentPid, cleanupTimeoutMs),
@@ -365,23 +409,30 @@ async function runParentScenario(
     await rm(root, { recursive: true, force: true });
   }
 
-  if (signal === "SIGKILL") process.stdout.write(`forced-parent-death ${iteration}/10 passed\n`);
+  if (forced) process.stdout.write(`forced-parent-death ${iteration}/10 passed\n`);
 }
 
-async function runParentLifecycleScenarios(executable: string): Promise<Record<string, unknown>> {
-  await runParentScenario(executable, "SIGINT", 1);
-  await runParentScenario(executable, "SIGTERM", 1);
-  for (let iteration = 1; iteration <= 10; iteration += 1) {
-    await runParentScenario(executable, "SIGKILL", iteration);
+async function runParentLifecycleScenarios(command: PiCommand): Promise<Record<string, unknown>> {
+  if (process.platform === "win32") {
+    await runParentScenario(command, "normal", 1);
+  } else {
+    await runParentScenario(command, "SIGINT", 1);
+    await runParentScenario(command, "SIGTERM", 1);
   }
-  return {
+  for (let iteration = 1; iteration <= 10; iteration += 1) {
+    await runParentScenario(command, "SIGKILL", iteration);
+  }
+  return process.platform === "win32" ? {
+    parentNormalShutdownCleanup: "passed",
+    forcedParentDeathDeadlineCleanup: "passed 10/10",
+  } : {
     parentSigintCleanup: "passed",
     parentSigtermCleanup: "passed",
     forcedParentDeathDeadlineCleanup: "passed 10/10",
   };
 }
 
-const executable = await resolvePiExecutable();
-const lifecycle = await runLifecycleScenarios(executable);
-const parentLifecycle = await runParentLifecycleScenarios(executable);
+const command = await resolvePiCommand();
+const lifecycle = await runLifecycleScenarios(command);
+const parentLifecycle = await runParentLifecycleScenarios(command);
 console.log(JSON.stringify({ ...lifecycle, ...parentLifecycle }, null, 2));

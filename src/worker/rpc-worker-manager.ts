@@ -10,6 +10,7 @@ import { sanitizedGitEnvironment } from "./git-environment.js";
 import { CHILD_DEADLINE_ENV, CHILD_MARKER_ENV } from "./watchdog.js";
 
 const SUPPORTED_PI_VERSION = "0.80.6";
+export const QUALIFIED_UNATTENDED_PLATFORMS: readonly NodeJS.Platform[] = Object.freeze(["darwin"]);
 
 export class WorkerInteractionRequiredError extends Error {
   constructor(message: string) {
@@ -105,19 +106,30 @@ export class ManagedRpcWorker {
   }
 }
 
+export interface RpcWorkerManagerOptions {
+  readonly resolveLaunch?: () => Promise<PiLaunchCommand>;
+  readonly extensionPath?: string;
+  readonly platform?: NodeJS.Platform;
+  readonly qualifiedPlatforms?: readonly NodeJS.Platform[];
+}
+
 export class RpcWorkerManager {
   readonly #resolveLaunch: () => Promise<PiLaunchCommand>;
   readonly #extensionPath: string;
   readonly #platform: NodeJS.Platform;
+  readonly #qualifiedPlatforms: readonly NodeJS.Platform[];
 
-  constructor(options: { resolveLaunch?: () => Promise<PiLaunchCommand>; extensionPath?: string; platform?: NodeJS.Platform } = {}) {
+  constructor(options: RpcWorkerManagerOptions = {}) {
     this.#resolveLaunch = options.resolveLaunch ?? resolveCurrentPiLaunchCommand;
     this.#extensionPath = options.extensionPath ?? fileURLToPath(new URL("../extension/index.ts", import.meta.url));
     this.#platform = options.platform ?? process.platform;
+    this.#qualifiedPlatforms = options.qualifiedPlatforms ?? QUALIFIED_UNATTENDED_PLATFORMS;
   }
 
   async launch(spec: WorkerLaunchSpec, ui: ParentWorkerUi): Promise<ManagedRpcWorker> {
-    if (this.#platform !== "darwin") throw new Error("Scheduled RPC writers are currently validated only on macOS");
+    if (!this.#qualifiedPlatforms.includes(this.#platform)) {
+      throw new Error(`Scheduled RPC writers are not qualified on ${this.#platform}`);
+    }
     futureDeadline(spec.absoluteDeadlineMs);
     const cwd = await realpath(spec.cwd);
     await mkdir(spec.sessionDirectory, { recursive: true, mode: 0o700 });
@@ -155,6 +167,7 @@ export class RpcWorkerManager {
         [CHILD_MARKER_ENV]: ownershipToken,
         [CHILD_DEADLINE_ENV]: String(spec.absoluteDeadlineMs),
       },
+      platform: this.#platform,
     });
     try {
       const state = responseData(await client.request({ type: "get_state" }));

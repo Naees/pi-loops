@@ -2,8 +2,10 @@
 
 import { spawnSync } from "node:child_process";
 import { findForbiddenPackagePaths, findMissingPackagePaths, packageFilePaths } from "./package-boundary.mjs";
+import { npmInvocation } from "./platform-command.mjs";
 
-const result = spawnSync("npm", ["pack", "--dry-run", "--json"], {
+const npm = npmInvocation(["pack", "--dry-run", "--json"]);
+const result = spawnSync(npm.executable, npm.args, {
   encoding: "utf8",
   shell: false,
 });

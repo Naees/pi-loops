@@ -70,7 +70,8 @@ function descendantCommand(pidFile: string): string {
     `fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parentPid: process.pid, childPid: child.pid }));`,
     "setInterval(() => {}, 1000);",
   ].join(" ");
-  return `${shellQuote(process.execPath)} -e ${shellQuote(code)}`;
+  const executable = process.platform === "win32" ? process.execPath.replaceAll("\\", "/") : process.execPath;
+  return `${shellQuote(executable)} -e ${shellQuote(code)}`;
 }
 
 function emitText(stream: AssistantMessageEventStream, output: AssistantMessage, text: string): void {

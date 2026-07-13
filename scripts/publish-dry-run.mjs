@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { findForbiddenPackagePaths, findMissingPackagePaths } from "./package-boundary.mjs";
+import { npmInvocation } from "./platform-command.mjs";
 
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 if (manifest.name !== "@naees/pi-loops" || typeof manifest.version !== "string") {
@@ -12,7 +13,8 @@ if (manifest.publishConfig?.access !== "public" || manifest.publishConfig?.prove
   throw new Error("Release manifest must require public access and npm provenance");
 }
 
-const result = spawnSync("npm", ["publish", "--dry-run", "--json", "--access", "public"], {
+const npm = npmInvocation(["publish", "--dry-run", "--json", "--access", "public"]);
+const result = spawnSync(npm.executable, npm.args, {
   encoding: "utf8",
   shell: false,
   maxBuffer: 8 * 1024 * 1024,

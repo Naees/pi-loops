@@ -9,6 +9,7 @@ import {
   validateAuditReport,
   validateCycloneDxSbom,
 } from "./security-policy.mjs";
+import { npmInvocation } from "./platform-command.mjs";
 
 const MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
@@ -41,13 +42,15 @@ function sbomOutputPath(args) {
 }
 
 const outputPath = sbomOutputPath(process.argv.slice(2));
-const auditResult = run("npm", ["audit", "--omit=dev", "--audit-level=high", "--json"]);
+const auditCommand = npmInvocation(["audit", "--omit=dev", "--audit-level=high", "--json"]);
+const auditResult = run(auditCommand.executable, auditCommand.args);
 const auditCounts = validateAuditReport(parseJsonOutput("npm audit", auditResult));
 if (auditResult.status !== 0) {
   throw new Error(`npm audit failed with exit status ${String(auditResult.status)} after policy validation`);
 }
 
-const sbomResult = run("npm", ["sbom", "--omit=dev", "--sbom-format=cyclonedx"]);
+const sbomCommand = npmInvocation(["sbom", "--omit=dev", "--sbom-format=cyclonedx"]);
+const sbomResult = run(sbomCommand.executable, sbomCommand.args);
 if (sbomResult.status !== 0) {
   throw new Error(`npm sbom failed\n${sbomResult.stderr || sbomResult.stdout}`);
 }

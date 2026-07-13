@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 // Production lifecycle scripts load this module with Node's native TypeScript runner, which requires real .ts specifiers.
 import { asError } from "../shared/errors.ts";
+import { terminateProcessTree } from "./process-tree.ts";
 import { RpcJsonlDecoder } from "./rpc-jsonl.ts";
 
 export interface RpcWorkerClientOptions {
@@ -13,6 +14,8 @@ export interface RpcWorkerClientOptions {
   readonly maxStderrBytes?: number;
   readonly maxRetainedEventBytes?: number;
   readonly maxRetainedEvents?: number;
+  readonly platform?: NodeJS.Platform;
+  readonly terminateProcessTree?: (pid: number, force: boolean) => Promise<void>;
 }
 
 export interface RpcEnvelope extends Record<string, unknown> {
@@ -54,6 +57,8 @@ export class RpcWorkerClient {
   readonly #maxStderrBytes: number;
   readonly #maxRetainedEventBytes: number;
   readonly #maxRetainedEvents: number;
+  readonly #platform: NodeJS.Platform;
+  readonly #terminateProcessTree: (pid: number, force: boolean) => Promise<void>;
   #stderr = "";
   #eventBytes = 0;
   #sequence = 0;
@@ -68,12 +73,15 @@ export class RpcWorkerClient {
     this.#maxStderrBytes = positive(options.maxStderrBytes, 64 * 1024, "maxStderrBytes");
     this.#maxRetainedEventBytes = positive(options.maxRetainedEventBytes, 8 * 1024 * 1024, "maxRetainedEventBytes");
     this.#maxRetainedEvents = positive(options.maxRetainedEvents, 10_000, "maxRetainedEvents");
+    this.#platform = options.platform ?? process.platform;
+    this.#terminateProcessTree = options.terminateProcessTree ?? ((pid, force) => terminateProcessTree(pid, { force, platform: this.#platform }));
     const decoder = new RpcJsonlDecoder({ maxLineBytes: positive(options.maxLineBytes, 1024 * 1024, "maxLineBytes") });
     this.child = spawn(options.executable, [...options.args], {
       cwd: options.cwd,
       env: options.environment,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: this.#platform !== "win32",
       windowsHide: true,
     });
     this.exited = new Promise((resolve) => this.child.once("exit", (code, signal) => resolve({ code, signal })));
@@ -234,13 +242,22 @@ export class RpcWorkerClient {
     this.closeInput();
     const graceful = await this.#waitForExit(2_000);
     if (graceful) return graceful;
-    this.child.kill("SIGTERM");
+    await this.#terminate(false).catch(() => undefined);
     const terminated = await this.#waitForExit(2_000);
     if (terminated) return terminated;
-    this.child.kill("SIGKILL");
+    let terminationError: unknown;
+    await this.#terminate(true).catch((error: unknown) => {
+      terminationError = error;
+    });
     const forced = await this.#waitForExit(2_000);
-    if (!forced) throw new Error("RPC worker survived SIGKILL");
+    if (!forced) throw new Error("RPC worker survived forced process-tree termination", { cause: terminationError });
     return forced;
+  }
+
+  async #terminate(force: boolean): Promise<void> {
+    const pid = this.child.pid;
+    if (!pid || this.child.exitCode !== null || this.child.signalCode !== null) return;
+    await this.#terminateProcessTree(pid, force);
   }
 
   async #waitForExit(timeoutMs: number): Promise<{ code: number | null; signal: NodeJS.Signals | null } | undefined> {
@@ -301,6 +318,6 @@ export class RpcWorkerClient {
       waiter.reject(error);
     }
     this.#waiters.clear();
-    if (this.child.exitCode === null && this.child.signalCode === null) this.child.kill("SIGTERM");
+    if (this.child.exitCode === null && this.child.signalCode === null) void this.#terminate(false).catch(() => undefined);
   }
 }

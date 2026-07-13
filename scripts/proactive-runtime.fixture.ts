@@ -41,7 +41,12 @@ test("real proactive runtime preserves the active checkout and retains review ou
   const piPackageRoot = join(process.cwd(), "node_modules", "@earendil-works", "pi-coding-agent");
   const piManifest = JSON.parse(await readFile(join(piPackageRoot, "package.json"), "utf8")) as { version: string };
   const piCli = await realpath(join(piPackageRoot, "dist", "cli.js"));
+  const qualificationPlatform = process.env.PI_LOOPS_QUALIFY_PLATFORM;
+  if (qualificationPlatform !== undefined && qualificationPlatform !== process.platform) {
+    throw new Error(`Qualification platform ${qualificationPlatform} does not match ${process.platform}`);
+  }
   const workers = new RpcWorkerManager({
+    ...(qualificationPlatform === process.platform ? { platform: process.platform, qualifiedPlatforms: [process.platform] } : {}),
     resolveLaunch: async () => ({
       executable: process.execPath,
       argsPrefix: [piCli],

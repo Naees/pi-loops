@@ -4,12 +4,13 @@ import { spawn, spawnSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { npmInvocation, piInvocation } from "./platform-command.mjs";
 
 const sourcePiHome = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-loops-attended-e2e-"));
 const temporaryPiHome = join(temporaryRoot, "pi-home");
 const project = join(temporaryRoot, "project");
-const piExecutable = process.env.PI_LOOPS_TEST_PI ?? "pi";
+const piCommand = piInvocation();
 
 function run(command, args) {
   const result = spawnSync(command, args, { cwd: process.cwd(), encoding: "utf8", shell: false, maxBuffer: 2 * 1024 * 1024 });
@@ -21,10 +22,15 @@ await mkdir(temporaryPiHome, { recursive: true, mode: 0o700 });
 await mkdir(project, { mode: 0o700 });
 await copyFile(join(sourcePiHome, "auth.json"), join(temporaryPiHome, "auth.json"));
 
-const pack = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", temporaryRoot]).stdout)[0];
+function runNpm(args) {
+  const command = npmInvocation(args);
+  return run(command.executable, command.args);
+}
+
+const pack = JSON.parse(runNpm(["pack", "--json", "--pack-destination", temporaryRoot]).stdout)[0];
 if (!pack?.filename) throw new Error("npm pack returned no tarball");
 const installRoot = join(temporaryRoot, "install");
-run("npm", ["install", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", join(temporaryRoot, pack.filename)]);
+runNpm(["install", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", join(temporaryRoot, pack.filename)]);
 const packageRoot = join(installRoot, "node_modules", "@naees", "pi-loops");
 
 const settings = JSON.parse(await readFile(join(sourcePiHome, "settings.json"), "utf8"));
@@ -32,8 +38,8 @@ settings.packages = [packageRoot];
 await writeFile(join(temporaryPiHome, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
 
 const child = spawn(
-  piExecutable,
-  ["--mode", "rpc", "--no-session"],
+  piCommand.executable,
+  [...piCommand.argsPrefix, "--mode", "rpc", "--no-session"],
   {
     cwd: project,
     stdio: ["pipe", "pipe", "pipe"],

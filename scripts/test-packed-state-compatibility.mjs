@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { access, mkdtemp, mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { localVitestInvocation, npmInvocation } from "./platform-command.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "pi-loops-packed-state-"));
 
@@ -20,6 +21,11 @@ function run(command, args, options = {}) {
     throw new Error(`${command} ${args.join(" ")} failed\nstdout:\n${result.stdout ?? ""}\nstderr:\n${result.stderr ?? ""}`);
   }
   return result;
+}
+
+function runNpm(args) {
+  const command = npmInvocation(args);
+  return run(command.executable, command.args);
 }
 
 async function snapshot(directory) {
@@ -41,7 +47,7 @@ async function snapshot(directory) {
 }
 
 try {
-  const packed = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", root]).stdout)[0];
+  const packed = JSON.parse(runNpm(["pack", "--json", "--pack-destination", root]).stdout)[0];
   if (!packed?.filename) throw new Error("npm pack returned no release-candidate filename");
   const tarball = join(root, packed.filename);
   const installRoot = join(root, "install");
@@ -51,10 +57,10 @@ try {
   const projectRoot = await realpath(projectDirectory);
   const packageRoot = join(installRoot, "node_modules", "@naees", "pi-loops");
   const fixturesRoot = join(process.cwd(), "tests", "fixtures", "state-v1");
-  const vitest = join(process.cwd(), "node_modules", ".bin", "vitest");
+  const vitest = localVitestInvocation(["run", "--config", "scripts/vitest.packed-state.config.ts", "--reporter=dot"]);
 
-  const install = () => run("npm", ["install", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", tarball]);
-  const verify = (seed) => run(vitest, ["run", "--config", "scripts/vitest.packed-state.config.ts", "--reporter=dot"], {
+  const install = () => runNpm(["install", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", tarball]);
+  const verify = (seed) => run(vitest.executable, vitest.args, {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -77,7 +83,7 @@ try {
     throw new Error("In-place packed upgrade changed version-one runtime state");
   }
 
-  run("npm", ["uninstall", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", "@naees/pi-loops"]);
+  runNpm(["uninstall", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", "@naees/pi-loops"]);
   await access(packageRoot).then(
     () => { throw new Error("npm uninstall left Pi Loops package files installed"); },
     (error) => {

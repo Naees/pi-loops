@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { npmInvocation } from "./platform-command.mjs";
 
 const args = process.argv.slice(2);
 const runtime = args.length === 1 && args[0] === "--runtime";
@@ -15,23 +16,29 @@ function run(command, commandArgs) {
 }
 
 const required = [
-  ["npm", ["run", "check"]],
-  ["npm", ["run", "test:coverage"]],
-  ["npm", ["run", "security:check"]],
-  ["npm", ["run", "pack:inspect"]],
-  ["npm", ["run", "test:packed"]],
-  ["npm", ["run", "test:packed:state"]],
-  ["npm", ["run", "test:e2e:scheduled:packed"]],
-  ["npm", ["run", "release:dry-run"]],
+  ["run", "check"],
+  ["run", "test:coverage"],
+  ["run", "security:check"],
+  ["run", "pack:inspect"],
+  ["run", "test:packed"],
+  ["run", "test:packed:state"],
+  ["run", "test:e2e:scheduled:packed"],
+  ["run", "release:dry-run"],
 ];
-for (const [command, commandArgs] of required) run(command, commandArgs);
+for (const commandArgs of required) {
+  const command = npmInvocation(commandArgs);
+  run(command.executable, command.args);
+}
 
 if (runtime) {
-  for (const [command, commandArgs] of [
-    ["npm", ["run", "test:e2e:attended"]],
-    ["npm", ["run", "test:e2e:proactive:runtime"]],
-    ["npm", ["run", "test:rpc:lifecycle:production"]],
-  ]) run(command, commandArgs);
+  for (const commandArgs of [
+    ["run", "test:e2e:attended"],
+    ["run", "test:e2e:proactive:runtime"],
+    ["run", "test:rpc:lifecycle:production"],
+  ]) {
+    const command = npmInvocation(commandArgs);
+    run(command.executable, command.args);
+  }
 }
 
 console.log(`Release-candidate checks passed${runtime ? " with authenticated macOS runtime gates" : " (runtime gates not requested)"}.`);

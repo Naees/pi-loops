@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { localVitestInvocation, npmInvocation } from "./platform-command.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "pi-loops-packed-scheduled-e2e-"));
 function run(command, args, options = {}) {
@@ -10,12 +11,18 @@ function run(command, args, options = {}) {
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed\n${result.stdout ?? ""}\n${result.stderr ?? ""}`);
   return result;
 }
+function runNpm(args) {
+  const command = npmInvocation(args);
+  return run(command.executable, command.args);
+}
+
 try {
-  const packed = JSON.parse(run("npm", ["pack", "--json", "--pack-destination", root]).stdout)[0];
+  const packed = JSON.parse(runNpm(["pack", "--json", "--pack-destination", root]).stdout)[0];
   const install = join(root, "install");
-  run("npm", ["install", "--prefix", install, "--ignore-scripts", "--no-audit", "--no-fund", join(root, packed.filename)]);
+  runNpm(["install", "--prefix", install, "--ignore-scripts", "--no-audit", "--no-fund", join(root, packed.filename)]);
   const packageRoot = join(install, "node_modules", "@naees", "pi-loops");
-  run(join(process.cwd(), "node_modules", ".bin", "vitest"), ["run", "--config", "scripts/vitest.packed-writer.config.ts", "--reporter=dot"], {
+  const vitest = localVitestInvocation(["run", "--config", "scripts/vitest.packed-writer.config.ts", "--reporter=dot"]);
+  run(vitest.executable, vitest.args, {
     stdio: "inherit",
     env: { ...process.env, PI_LOOPS_PACKED_ROOT: packageRoot },
   });

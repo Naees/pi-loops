@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { findForbiddenPackagePaths, findMissingPackagePaths, REQUIRED_PACKAGE_PATHS } from "./package-boundary.mjs";
+import { npmInvocation, piInvocation } from "./platform-command.mjs";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-loops-packed-"));
 
@@ -21,10 +22,15 @@ function run(command, args, options = {}) {
   return result;
 }
 
-async function runPackedStatus(piExecutable, extensionPath, cwd, environment) {
+function runNpm(args) {
+  const command = npmInvocation(args);
+  return run(command.executable, command.args);
+}
+
+async function runPackedStatus(piCommand, extensionPath, cwd, environment) {
   const child = spawn(
-    piExecutable,
-    ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extensionPath],
+    piCommand.executable,
+    [...piCommand.argsPrefix, "--mode", "rpc", "--no-session", "--no-extensions", "--extension", extensionPath],
     { cwd, env: environment, stdio: ["pipe", "pipe", "pipe"], shell: false },
   );
   let buffer = "";
@@ -74,7 +80,7 @@ async function runPackedStatus(piExecutable, extensionPath, cwd, environment) {
 }
 
 try {
-  const pack = run("npm", ["pack", "--json", "--pack-destination", temporaryRoot]);
+  const pack = runNpm(["pack", "--json", "--pack-destination", temporaryRoot]);
   const report = JSON.parse(pack.stdout)[0];
   if (!report?.filename || !Array.isArray(report.files)) throw new Error("npm pack returned an invalid report");
 
@@ -85,7 +91,7 @@ try {
 
   const tarball = join(temporaryRoot, report.filename);
   const installRoot = join(temporaryRoot, "install");
-  run("npm", ["install", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", tarball]);
+  runNpm(["install", "--prefix", installRoot, "--ignore-scripts", "--no-audit", "--no-fund", tarball]);
 
   const packageRoot = join(installRoot, "node_modules", "@naees", "pi-loops");
   const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
@@ -99,10 +105,10 @@ try {
   await Promise.all(REQUIRED_PACKAGE_PATHS.map((path) => readFile(join(packageRoot, path), "utf8")));
 
   const extensionPath = join(packageRoot, "src", "extension", "index.ts");
-  const piExecutable = process.env.PI_LOOPS_TEST_PI ?? "pi";
+  const piCommand = piInvocation();
   const rpc = run(
-    piExecutable,
-    ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extensionPath],
+    piCommand.executable,
+    [...piCommand.argsPrefix, "--mode", "rpc", "--no-session", "--no-extensions", "--extension", extensionPath],
     {
       cwd: resolve(temporaryRoot),
       input: `${JSON.stringify({ id: "commands", type: "get_commands" })}\n`,
@@ -120,7 +126,7 @@ try {
     throw new Error("Packed extension did not register /loops");
   }
   await runPackedStatus(
-    piExecutable,
+    piCommand,
     extensionPath,
     resolve(temporaryRoot),
     { ...process.env, PI_CODING_AGENT_DIR: join(temporaryRoot, "pi-home-status") },

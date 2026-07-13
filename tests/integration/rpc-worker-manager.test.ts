@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RpcWorkerManager } from "../../src/worker/rpc-worker-manager.js";
+import { QUALIFIED_UNATTENDED_PLATFORMS, RpcWorkerManager } from "../../src/worker/rpc-worker-manager.js";
 import type { ParentWorkerUi } from "../../src/ui/worker-ui-relay.js";
 
 const temporaryDirectories: string[] = [];
@@ -52,7 +52,7 @@ process.stdin.on("data", chunk => {
 });
 `;
 
-async function harness(options: { program?: string; version?: string } = {}) {
+async function harness(options: { program?: string; version?: string; platform?: NodeJS.Platform; qualifiedPlatforms?: readonly NodeJS.Platform[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "pi-loops-worker-manager-"));
   const cwd = join(root, "worktree");
   const sessions = join(root, "sessions");
@@ -67,8 +67,10 @@ async function harness(options: { program?: string; version?: string } = {}) {
   process.env.PI_LOOPS_TEST_ARGV = argvFile;
   process.env.PI_LOOPS_TEST_SESSION = sessionFile;
   process.env.PI_LOOPS_TEST_DESCENDANT = descendantFile;
+  const platform = options.platform ?? "darwin";
   const manager = new RpcWorkerManager({
-    platform: "darwin",
+    platform,
+    qualifiedPlatforms: options.qualifiedPlatforms ?? [platform],
     extensionPath: "/tmp/pi-loops-extension.ts",
     resolveLaunch: async () => ({
       executable: process.execPath,
@@ -346,13 +348,30 @@ process.stdin.on("data", chunk => {
     }
   });
 
-  it.each(["linux", "win32"] as const)("fails closed on unsupported platform %s", async (platform) => {
+  it.each(["linux", "win32"] as const)("can exercise an explicitly isolated platform qualification override for %s", async (platform) => {
+    const qualified = await harness({ platform, qualifiedPlatforms: [platform] });
+    try {
+      const worker = await qualified.manager.launch({
+        runId: "run_1234abcd",
+        cwd: qualified.cwd,
+        sessionDirectory: qualified.sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+      }, hostUi());
+      await expect(worker.runCycle("qualification cycle")).resolves.toEqual(expect.objectContaining({ lastAssistantText: "controlled result" }));
+      await worker.stop();
+    } finally {
+      qualified.restore();
+    }
+  });
+
+  it.each(["linux", "win32"] as const)("fails closed on unqualified platform %s", async (platform) => {
+    expect(QUALIFIED_UNATTENDED_PLATFORMS).not.toContain(platform);
     const manager = new RpcWorkerManager({ platform });
     await expect(manager.launch({
       runId: "run_1234abcd",
       cwd: process.cwd(),
       sessionDirectory: join(process.cwd(), ".unused"),
       absoluteDeadlineMs: Date.now() + 60_000,
-    }, hostUi())).rejects.toThrow("validated only on macOS");
+    }, hostUi())).rejects.toThrow(`not qualified on ${platform}`);
   });
 });
