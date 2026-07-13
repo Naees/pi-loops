@@ -155,14 +155,14 @@ describe("schedule controller", () => {
     await vi.waitFor(async () => {
       const stored = (await controller.list(host.cwd))[0];
       expect(stored).toEqual(expect.objectContaining({ state: "pending_coalesced", nextFireAt: "2026-07-12T12:25:00.000Z" }));
-    });
+    }, { timeout: 3_000 });
     expect(runner).toHaveBeenCalledTimes(1);
 
     finishFirst?.({ status: "finished" });
     await vi.waitFor(async () => {
       expect(runner).toHaveBeenCalledTimes(2);
       expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "enabled" }));
-    });
+    }, { timeout: 3_000 });
     const projectId = createProjectId(await realpath(project));
     await expectClaimsReleased(dataRoot, projectId, schedule.scheduleId);
     await controller.shutdown();

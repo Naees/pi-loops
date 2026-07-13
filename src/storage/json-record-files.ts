@@ -1,4 +1,5 @@
 import { open, readdir } from "node:fs/promises";
+import { readBoundedFile } from "./bounded-file-reader.js";
 
 export async function readBoundedJsonFile(
   path: string,
@@ -8,17 +9,8 @@ export async function readBoundedJsonFile(
   let handle;
   try {
     handle = await open(path, "r");
-    const metadata = await handle.stat();
-    if (metadata.size > maxBytes) throw new Error(oversizedMessage);
-    const buffer = Buffer.alloc(maxBytes + 1);
-    let bytesRead = 0;
-    while (bytesRead < buffer.length) {
-      const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
-      if (result.bytesRead === 0) break;
-      bytesRead += result.bytesRead;
-    }
-    if (bytesRead > maxBytes) throw new Error(oversizedMessage);
-    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8")) as unknown;
+    const contents = await readBoundedFile(handle, maxBytes, oversizedMessage);
+    return JSON.parse(contents.toString("utf8")) as unknown;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;

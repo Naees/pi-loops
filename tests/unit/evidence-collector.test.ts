@@ -27,7 +27,7 @@ describe("cycle evidence", () => {
 
   it("uses the latest exact execution and bounds stored output", () => {
     const contract = createCompletionContract("tests pass", ["npm test"]);
-    const collector = new CycleEvidenceCollector({ maxSummaryBytes: 16 });
+    const collector = new CycleEvidenceCollector({ maxSummaryBytes: 32 });
     collector.recordToolResult({
       toolCallId: "call-1",
       toolName: "bash",
@@ -39,13 +39,15 @@ describe("cycle evidence", () => {
       toolCallId: "call-2",
       toolName: "bash",
       input: { command: "npm test" },
-      content: [{ type: "text", text: "all tests passed with a very long report" }],
+      content: [{ type: "text", text: "界".repeat(100) }],
       isError: false,
     });
 
     const evidence = collector.evidenceFor(contract);
     expect(evidence[0]).toEqual(expect.objectContaining({ passed: true, toolCallId: "call-2" }));
     expect(evidence[0]?.summary).toContain("[truncated by Pi Loops]");
+    expect(Buffer.byteLength(evidence[0]?.summary ?? "", "utf8")).toBeLessThanOrEqual(32);
+    expect(evidence[0]?.summary).not.toContain("�");
     expect(requiredEvidencePassed(evidence)).toBe(true);
   });
 });

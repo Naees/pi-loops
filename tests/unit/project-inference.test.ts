@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -34,11 +34,22 @@ describe("project verifier inference", () => {
     expect(await inferProjectVerifierCommands(path, "Implement the feature")).toEqual([]);
   });
 
-  it("uses ecosystem test commands only when tests are relevant", async () => {
+  it.each([
+    ["Cargo.toml", "cargo test"],
+    ["go.mod", "go test ./..."],
+    ["pyproject.toml", "pytest"],
+  ])("uses the %s ecosystem test command only when tests are relevant", async (manifest, command) => {
     const path = await project();
-    await mkdir(join(path, "src"));
-    await writeFile(join(path, "Cargo.toml"), "[package]\nname = \"example\"\nversion = \"0.1.0\"\n");
-    expect(await inferProjectVerifierCommands(path, "Fix the failing tests")).toEqual(["cargo test"]);
+    await writeFile(join(path, manifest), "fixture\n");
+    expect(await inferProjectVerifierCommands(path, "Fix the failing tests")).toEqual([command]);
     expect(await inferProjectVerifierCommands(path, "Update the README")).toEqual([]);
+  });
+
+  it("ignores malformed, non-object, and oversized package manifests", async () => {
+    for (const contents of ["not json", "[]", JSON.stringify({ scripts: [] }), "x".repeat(256 * 1024 + 1)]) {
+      const path = await project();
+      await writeFile(join(path, "package.json"), contents);
+      expect(await inferProjectVerifierCommands(path, "Build and test the project")).toEqual([]);
+    }
   });
 });

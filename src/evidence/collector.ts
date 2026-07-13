@@ -1,4 +1,5 @@
 import type { CompletionContract } from "../contracts/completion-contract.js";
+import { truncateUtf8 } from "../shared/text.js";
 
 export interface ObservedToolResult {
   readonly toolCallId: string;
@@ -30,12 +31,6 @@ interface CapturedBashResult {
   readonly summary: string;
 }
 
-function boundedText(value: string, maxBytes: number): string {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.byteLength <= maxBytes) return value;
-  return `${bytes.subarray(0, maxBytes).toString("utf8")}\n[truncated by Pi Loops]`;
-}
-
 export class CycleEvidenceCollector {
   readonly #maxToolResults: number;
   readonly #maxSummaryBytes: number;
@@ -65,7 +60,7 @@ export class CycleEvidenceCollector {
       toolCallId: event.toolCallId,
       command: command.trim(),
       passed: !event.isError,
-      summary: boundedText(text, this.#maxSummaryBytes),
+      summary: truncateUtf8(text, this.#maxSummaryBytes),
     });
   }
 

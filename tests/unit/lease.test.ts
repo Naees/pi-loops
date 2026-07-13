@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   LeaseOwnershipError,
   LeaseUnavailableError,
@@ -50,6 +50,16 @@ describe("writer leases", () => {
     })).rejects.toThrow("operation failed");
     const nextLease = await acquireWriterLease(path, 5_000);
     await releaseWriterLease(nextLease);
+  });
+
+  it("returns scoped operation values and skips operations when acquisition is unavailable", async () => {
+    const path = await leasePath();
+    await expect(withWriterLease(path, 5_000, new Date(), async () => "value")).resolves.toBe("value");
+    const owner = await acquireWriterLease(path, 5_000);
+    const operation = vi.fn(async () => "never");
+    await expect(withWriterLease(path, 5_000, new Date(), operation)).rejects.toBeInstanceOf(LeaseUnavailableError);
+    expect(operation).not.toHaveBeenCalled();
+    await releaseWriterLease(owner);
   });
 
   it("releases only through the active matching lease handle", async () => {

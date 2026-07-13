@@ -62,6 +62,46 @@ describe("current model evaluator provider adapter", () => {
     await expect(current.evaluate(input)).rejects.toMatchObject({ name: "EvaluatorUnavailableError", message: "provider down" });
   });
 
+  it("rejects aggregate evaluator payloads above the transport ceiling", async () => {
+    await expect(evaluator({ ok: true, apiKey: "secret" }).evaluate({
+      goal: "finish",
+      constraints: Array.from({ length: 50 }, () => "c".repeat(4 * 1024)),
+      workerSummary: "summary",
+      verifierEvidence: Array.from({ length: 20 }, () => ({
+        criterion: "v".repeat(4 * 1024),
+        passed: true,
+        summary: "s".repeat(8 * 1024),
+      })),
+    })).rejects.toMatchObject({ name: "InvalidEvaluatorResponseError", message: "Evaluator input exceeds the bounded payload limit" });
+    expect(completeMock).not.toHaveBeenCalled();
+  });
+
+  it("lets cancellation win before and during authentication resolution", async () => {
+    const alreadyAborted = new AbortController();
+    alreadyAborted.abort();
+    const getApiKeyAndHeaders = vi.fn(async () => ({ ok: true, apiKey: "secret" }));
+    const current = new CurrentModelEvaluator({
+      model: { provider: "test-provider", id: "test-model" } as never,
+      modelRegistry: { getApiKeyAndHeaders } as never,
+    });
+    await expect(current.evaluate(input, alreadyAborted.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(getApiKeyAndHeaders).not.toHaveBeenCalled();
+
+    let resolveAuth: ((value: { ok: true; apiKey: string }) => void) | undefined;
+    const delayedAuth = vi.fn(() => new Promise<{ ok: true; apiKey: string }>((resolve) => { resolveAuth = resolve; }));
+    const delayed = new CurrentModelEvaluator({
+      model: { provider: "test-provider", id: "test-model" } as never,
+      modelRegistry: { getApiKeyAndHeaders: delayedAuth } as never,
+    });
+    const abort = new AbortController();
+    const evaluation = delayed.evaluate(input, abort.signal);
+    await vi.waitFor(() => expect(delayedAuth).toHaveBeenCalledOnce());
+    abort.abort();
+    resolveAuth?.({ ok: true, apiKey: "secret" });
+    await expect(evaluation).rejects.toMatchObject({ name: "AbortError" });
+    expect(completeMock).not.toHaveBeenCalled();
+  });
+
   it("bounds multibyte evaluator input before sending it", async () => {
     completeMock.mockResolvedValue({
       stopReason: "stop",

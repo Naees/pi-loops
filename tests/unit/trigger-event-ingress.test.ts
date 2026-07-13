@@ -17,6 +17,37 @@ describe("trigger event ingress", () => {
     expect(failure).toHaveBeenCalledTimes(2);
   });
 
+  it("expires debounce windows at the exact boundary and resets through forget and clear", async () => {
+    let nowMs = Date.parse("2026-07-12T12:00:00.000Z");
+    const ingress = new TriggerEventIngress(() => new Date(nowMs));
+    const deliver = vi.fn(async (): Promise<TriggerFireResult> => "started");
+    await expect(ingress.dispatch(triggerId, undefined, deliver)).resolves.toBe("started");
+    await expect(ingress.dispatch(triggerId, undefined, deliver)).resolves.toBe("started");
+    await expect(ingress.dispatch(triggerId, undefined, deliver)).resolves.toBe("coalesced");
+    expect(deliver).toHaveBeenCalledTimes(2);
+
+    nowMs += 250;
+    await expect(ingress.dispatch(triggerId, undefined, deliver)).resolves.toBe("started");
+    ingress.forget(triggerId);
+    await expect(ingress.dispatch(triggerId, "repeat", deliver)).resolves.toBe("started");
+    await expect(ingress.dispatch(triggerId, "repeat", deliver)).resolves.toBe("ignored");
+    ingress.clear();
+    await expect(ingress.dispatch(triggerId, "repeat", deliver)).resolves.toBe("started");
+  });
+
+  it("evicts only the oldest event ID after the bounded history is full", async () => {
+    let nowMs = Date.parse("2026-07-12T12:00:00.000Z");
+    const ingress = new TriggerEventIngress(() => new Date(nowMs));
+    const deliver = vi.fn(async (): Promise<TriggerFireResult> => "started");
+    for (let index = 0; index < 129; index += 1) {
+      await ingress.dispatch(triggerId, `event-${index}`, deliver);
+      nowMs += 250;
+    }
+    await expect(ingress.dispatch(triggerId, "event-128", deliver)).resolves.toBe("ignored");
+    await expect(ingress.dispatch(triggerId, "event-0", deliver)).resolves.toBe("started");
+    expect(deliver).toHaveBeenCalledTimes(130);
+  });
+
   it("admits at most one pending delivery during a burst", async () => {
     const ingress = new TriggerEventIngress(() => new Date("2026-07-12T12:00:00.000Z"));
     let release: (() => void) | undefined;

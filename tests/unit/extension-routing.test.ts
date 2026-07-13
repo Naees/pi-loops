@@ -59,6 +59,38 @@ describe("extension unattended routing", () => {
     expect(stopSchedule).not.toHaveBeenCalled();
   });
 
+  it("routes explicit workflow IDs before falling back to attended goals", async () => {
+    const stopSchedule = vi.fn(async (id?: string) => id === "schedule_1234abcd" ? id : undefined);
+    const stopTrigger = vi.fn(async (id?: string) => id === "trigger_1234abcd" ? id : undefined);
+    const stopGoal = vi.fn(async (id?: string) => id ? run("proactive", id) : undefined);
+    const loadRun = vi.fn(async () => undefined);
+
+    await expect(routeStopWork({ requestedId: "schedule_1234abcd", loadRun, stopSchedule, stopTrigger, stopGoal }))
+      .resolves.toEqual({ kind: "schedule", id: "schedule_1234abcd" });
+    expect(stopTrigger).not.toHaveBeenCalled();
+    await expect(routeStopWork({ requestedId: "trigger_1234abcd", loadRun, stopSchedule, stopTrigger, stopGoal }))
+      .resolves.toEqual({ kind: "trigger", id: "trigger_1234abcd" });
+    await expect(routeStopWork({ requestedId: "run_deadbeef", loadRun, stopSchedule, stopTrigger, stopGoal }))
+      .resolves.toEqual({ kind: "goal", run: expect.objectContaining({ runId: "run_deadbeef" }) });
+    expect(loadRun).not.toHaveBeenCalled();
+  });
+
+  it("falls back safely when the reported unattended active run is missing", async () => {
+    const stopSchedule = vi.fn(async () => undefined);
+    const stopTrigger = vi.fn(async () => undefined);
+    const stopGoal = vi.fn(async () => undefined);
+    await expect(routeStopWork({
+      activeRunId: "run_1234abcd",
+      loadRun: vi.fn(async () => undefined),
+      stopSchedule,
+      stopTrigger,
+      stopGoal,
+    })).resolves.toEqual({ kind: "goal", run: undefined });
+    expect(stopSchedule).toHaveBeenCalledWith(undefined);
+    expect(stopTrigger).toHaveBeenCalledWith(undefined);
+    expect(stopGoal).toHaveBeenCalledWith(undefined);
+  });
+
   it("stops the active scheduled writer before queued proactive work", async () => {
     const stopSchedule = vi.fn(async () => "schedule_1234abcd");
     const stopTrigger = vi.fn(async () => "trigger_1234abcd");

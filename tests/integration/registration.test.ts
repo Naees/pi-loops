@@ -182,6 +182,44 @@ describe("Pi extension registration", () => {
     expect(notifications.at(-1)?.message).toContain("run checks");
   });
 
+  it("fails closed for trigger confirmation and deletion through the public command", async () => {
+    delete process.env.PI_LOOPS_CHILD;
+    const { ctx, notifications } = await context();
+    const { api, registerCommand } = mockApi();
+    piLoopsExtension(api);
+    const command = registerCommand.mock.calls[0]?.[1] as { handler(args: string, context: ExtensionContext): Promise<void> };
+
+    (ctx as { hasUI: boolean }).hasUI = false;
+    await command.handler("watch event -- handle output", ctx);
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({
+      level: "error",
+      message: "Trigger creation requires interactive confirmation",
+    }));
+    (ctx as { hasUI: boolean }).hasUI = true;
+    await command.handler("watch event -- handle output", ctx);
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "error", message: "Trigger creation cancelled" }));
+
+    ctx.ui.confirm = vi.fn(async () => true);
+    await command.handler("watch event -- handle output", ctx);
+    const triggerId = notifications.at(-1)?.message.match(/^trigger_[0-9a-f]{8}/)?.[0];
+    expect(triggerId).toBeDefined();
+    (ctx as { hasUI: boolean }).hasUI = false;
+    await command.handler(`delete ${triggerId}`, ctx);
+    expect(notifications.at(-1)?.message).toBe("Runtime-data deletion requires an interactive confirmation");
+    (ctx as { hasUI: boolean }).hasUI = true;
+    ctx.ui.confirm = vi.fn(async () => false);
+    await command.handler(`delete ${triggerId}`, ctx);
+    expect(notifications.at(-1)?.message).toBe("Run deletion cancelled.");
+    await command.handler("status", ctx);
+    expect(notifications.at(-1)?.message).toContain(triggerId);
+
+    ctx.ui.confirm = vi.fn(async () => true);
+    await command.handler(`delete ${triggerId}`, ctx);
+    expect(notifications.at(-1)?.message).toBe(`Deleted Pi Loops runtime data for ${triggerId}.`);
+    await command.handler("status", ctx);
+    expect(notifications.at(-1)?.message).not.toContain(triggerId);
+  });
+
   it("creates confirmed triggers and accepts only the namespaced event contract", async () => {
     delete process.env.PI_LOOPS_CHILD;
     const { ctx, notifications } = await context();

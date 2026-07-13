@@ -69,6 +69,24 @@ const evaluator: CompletionEvaluator = {
   evaluate: vi.fn(async () => ({ complete: true, needsUser: false, reason: "accepted", failedCriteria: [], feedback: null })),
 };
 
+function proactiveTrigger(schedule: ScheduleRecord, projectId: string, projectRoot: string, activeRunId = "run_1234abcd"): TriggerRecord {
+  return {
+    schemaVersion: 1,
+    triggerId: "trigger_1234abcd",
+    projectId,
+    projectRoot,
+    state: "running",
+    goal: schedule.goal,
+    constraints: schedule.constraints,
+    verifierCommands: schedule.verifierCommands,
+    budget: schedule.budget,
+    source: { kind: "event" },
+    activeRunId,
+    createdAt: schedule.createdAt,
+    updatedAt: schedule.updatedAt,
+  };
+}
+
 function worktrees(projectRoot: string) {
   return {
     inspectRepository: vi.fn(async () => ({ repositoryRoot: projectRoot, commonGitDirectory: join(projectRoot, ".git"), baseCommit: "a".repeat(40) })),
@@ -120,6 +138,45 @@ describe("unattended run controller", () => {
     expect(stored).toEqual(expect.objectContaining({
       state: "completed",
       worker: expect.objectContaining({ branch: "pi-loops/run_1234abcd", reviewCommit: "b".repeat(40), worktreeRetained: false }),
+    }));
+  });
+
+  it("uses successful exact RPC verifier evidence for unattended evaluation", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    rpc.worker.runCycle.mockResolvedValue({
+      lastAssistantText: "implemented and verified",
+      events: [
+        { type: "tool_execution_end", toolName: "bash", toolCallId: "unrelated", args: { command: "npm run lint" }, result: { content: [{ type: "text", text: "lint passed" }] }, isError: false },
+        { type: "tool_execution_end", toolName: "bash", toolCallId: "old-failure", args: { command: "npm test" }, result: { content: [{ type: "text", text: "failed" }] }, isError: true },
+        { type: "tool_execution_end", toolName: "bash", toolCallId: "latest-success", args: { command: "npm test" }, result: { content: [{ type: "text", text: "all tests passed" }] }, isError: false },
+      ],
+    } as never);
+    const completionEvaluator: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({ complete: true, needsUser: false, reason: "accepted", failedCriteria: [], feedback: null })),
+    };
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+
+    await expect(controller.runSchedule(
+      { ...schedule, verifierCommands: ["npm test"] },
+      "run_1234abcd",
+      completionEvaluator,
+      host,
+      new AbortController().signal,
+    )).resolves.toEqual({ status: "finished" });
+
+    expect(completionEvaluator.evaluate).toHaveBeenCalledWith(expect.objectContaining({
+      verifierEvidence: [expect.objectContaining({ passed: true, summary: "all tests passed" })],
+    }), expect.any(AbortSignal));
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "completed",
+      latestEvidence: [expect.objectContaining({
+        command: "npm test",
+        observed: true,
+        passed: true,
+        toolCallId: "latest-success",
+      })],
     }));
   });
 
@@ -415,48 +472,138 @@ describe("unattended run controller", () => {
     expect(host.notify).toHaveBeenCalledWith(expect.stringContaining("proactive work started"), "info");
   });
 
-  it("serializes concurrent proactive writers through the repository guard", async () => {
+  it("restarts proactive work with the same run, worktree, session, deadline, and budget epoch", async () => {
     const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
-    const makeTrigger = (triggerId: string, runId: string): TriggerRecord => ({
-      schemaVersion: 1,
-      triggerId,
-      projectId,
-      projectRoot,
-      state: "running",
-      goal: schedule.goal,
-      constraints: [],
-      verifierCommands: [],
-      budget: schedule.budget,
-      source: { kind: "event" },
-      activeRunId: runId,
-      createdAt: schedule.createdAt,
-      updatedAt: schedule.updatedAt,
-    });
+    const trigger = proactiveTrigger(schedule, projectId, projectRoot);
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const needsUser: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({ complete: false, needsUser: true, reason: "need guidance", failedCriteria: ["guidance"], feedback: null })),
+    };
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+
+    await expect(controller.runTrigger(trigger, "run_1234abcd", needsUser, host, new AbortController().signal, "start"))
+      .resolves.toEqual({ status: "interrupted" });
+    const interrupted = await new RunStore(dataRoot, projectId).load("run_1234abcd");
+    expect(interrupted).toEqual(expect.objectContaining({
+      mode: "proactive",
+      triggerId: trigger.triggerId,
+      state: "awaiting_user",
+      budgetEpoch: 1,
+      worker: expect.objectContaining({
+        branch: "pi-loops/run_1234abcd",
+        worktreePath: expect.any(String),
+        sessionId: "session-id",
+        sessionFile: "/tmp/session.jsonl",
+      }),
+    }));
+    expect(interrupted?.budgetDeadlineAt).toBeDefined();
+
+    rpc.worker.runCycle.mockResolvedValue({ lastAssistantText: "done", events: [] });
+    const complete: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({ complete: true, needsUser: false, reason: "accepted", failedCriteria: [], feedback: null })),
+    };
+    const restarted = await controller.runTrigger(trigger, "run_1234abcd", complete, host, new AbortController().signal, "restart");
+
+    expect(restarted).toEqual({ status: "finished" });
+    const stored = await new RunStore(dataRoot, projectId).load("run_1234abcd");
+    expect(stored).toEqual(expect.objectContaining({
+      mode: "proactive",
+      triggerId: trigger.triggerId,
+      state: "completed",
+      budgetEpoch: 1,
+      budgetDeadlineAt: interrupted?.budgetDeadlineAt,
+      worker: expect.objectContaining({
+        branch: interrupted?.worker?.branch,
+        worktreePath: interrupted?.worker?.worktreePath,
+        sessionId: interrupted?.worker?.sessionId,
+        sessionFile: interrupted?.worker?.sessionFile,
+      }),
+    }));
+    expect(git.create).toHaveBeenCalledOnce();
+    expect(rpc.manager.launch).toHaveBeenCalledTimes(2);
+    expect(rpc.manager.launch.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+      runId: "run_1234abcd",
+      cwd: interrupted?.worker?.worktreePath,
+      resume: {
+        sessionId: interrupted?.worker?.sessionId,
+        sessionFile: interrupted?.worker?.sessionFile,
+      },
+    }));
+  });
+
+  it("starts a new finite epoch when proactive restart follows budget exhaustion", async () => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
+    const trigger = {
+      ...proactiveTrigger(schedule, projectId, projectRoot),
+      budget: { ...schedule.budget, maxCycles: 1 },
+    };
+    const git = worktrees(projectRoot);
+    const rpc = workers();
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const incomplete: CompletionEvaluator = {
+      evaluate: vi.fn(async () => ({ complete: false, needsUser: false, reason: "not done", failedCriteria: ["work"], feedback: "continue" })),
+    };
+
+    await expect(controller.runTrigger(trigger, "run_1234abcd", incomplete, host, new AbortController().signal, "start"))
+      .resolves.toEqual({ status: "interrupted" });
+    expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
+      state: "budget_exhausted",
+      budgetEpoch: 1,
+      cycle: 1,
+    }));
+
+    await expect(controller.runTrigger(trigger, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+      .resolves.toEqual({ status: "finished" });
+    const completed = await new RunStore(dataRoot, projectId).load("run_1234abcd");
+    expect(completed).toEqual(expect.objectContaining({ state: "completed", mode: "proactive", budgetEpoch: 2, cycle: 1, totalCycles: 2 }));
+    expect(completed?.budgetHistory).toEqual([expect.objectContaining({ epoch: 1, cycles: 1, reason: "Run exhausted its cycles budget" })]);
+  });
+
+  it.each([
+    ["scheduled", "proactive"],
+    ["proactive", "scheduled"],
+  ] as const)("serializes a %s writer before a %s writer", async (firstMode, secondMode) => {
+    const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
     const git = worktrees(projectRoot);
     const rpc = workers();
     let finishFirst: ((result: { lastAssistantText: string; events: never[] }) => void) | undefined;
-    rpc.worker.runCycle.mockImplementation(() => rpc.worker.runCycle.mock.calls.length === 1
-      ? new Promise((resolve) => { finishFirst = resolve; })
-      : Promise.resolve({ lastAssistantText: "implemented", events: [] }));
-    const controller = new UnattendedRunController({
-      dataRoot,
-      repositoryLockRoot: join(dataRoot, "repository-locks"),
-      worktrees: git,
-      workers: rpc.manager,
-      writerLeaseStaleMs: 2_000,
+    let markFirstCycleStarted: (() => void) | undefined;
+    const firstCycleStarted = new Promise<void>((resolve) => { markFirstCycleStarted = resolve; });
+    let activeCycles = 0;
+    let maxActiveCycles = 0;
+    rpc.worker.runCycle.mockImplementation(() => {
+      activeCycles += 1;
+      maxActiveCycles = Math.max(maxActiveCycles, activeCycles);
+      if (rpc.worker.runCycle.mock.calls.length === 1) {
+        markFirstCycleStarted?.();
+        return new Promise<{ lastAssistantText: string; events: never[] }>((resolve) => {
+          finishFirst = (result) => { activeCycles -= 1; resolve(result); };
+        });
+      }
+      activeCycles -= 1;
+      return Promise.resolve({ lastAssistantText: "implemented", events: [] });
     });
+    const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
+    const invoke = (mode: "scheduled" | "proactive", runId: string) => mode === "scheduled"
+      ? controller.runSchedule({ ...schedule, activeRunId: runId }, runId, evaluator, host, new AbortController().signal)
+      : controller.runTrigger(proactiveTrigger(schedule, projectId, projectRoot, runId), runId, evaluator, host, new AbortController().signal);
 
-    const first = controller.runTrigger(makeTrigger("trigger_1234abcd", "run_1234abcd"), "run_1234abcd", evaluator, host, new AbortController().signal);
-    await vi.waitFor(() => expect(controller.activeRunId).toBe("run_1234abcd"));
-    const second = controller.runTrigger(makeTrigger("trigger_deadbeef", "run_deadbeef"), "run_deadbeef", evaluator, host, new AbortController().signal);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const first = invoke(firstMode, "run_1234abcd");
+    await firstCycleStarted;
+    expect(controller.activeRunId).toBe("run_1234abcd");
+    let secondSettled = false;
+    const second = invoke(secondMode, "run_deadbeef").finally(() => { secondSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(secondSettled).toBe(false);
     expect(rpc.manager.launch).toHaveBeenCalledOnce();
     finishFirst?.({ lastAssistantText: "implemented", events: [] });
 
     await expect(first).resolves.toEqual({ status: "finished" });
     await expect(second).resolves.toEqual({ status: "finished" });
     expect(rpc.manager.launch).toHaveBeenCalledTimes(2);
-  }, 5_000);
+    expect(maxActiveCycles).toBe(1);
+  }, 8_000);
 
   it("fails closed on an unhandled worker interaction", async () => {
     const { dataRoot, projectRoot, entries, host, schedule } = await harness();

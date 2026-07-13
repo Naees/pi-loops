@@ -21,8 +21,15 @@ describe("public identifiers", () => {
       .mockReturnValueOnce("run_00000002");
     await expect(allocateUniqueId(createId, async (id) => id.endsWith("2"), "allocation failed"))
       .resolves.toBe("run_00000002");
-    await expect(allocateUniqueId(() => "occupied", async () => false, "allocation failed"))
-      .rejects.toThrow("allocation failed");
+    const occupied = vi.fn(() => "occupied");
+    const unavailable = vi.fn(async () => false);
+    await expect(allocateUniqueId(occupied, unavailable, "allocation failed")).rejects.toThrow("allocation failed");
+    expect(occupied).toHaveBeenCalledTimes(10);
+    expect(unavailable).toHaveBeenCalledTimes(10);
+
+    const availabilityFailure = vi.fn(async () => { throw new Error("storage failed"); });
+    await expect(allocateUniqueId(occupied, availabilityFailure, "allocation failed")).rejects.toThrow("storage failed");
+    expect(availabilityFailure).toHaveBeenCalledOnce();
   });
 
   it("creates a stable project ID from the canonical root", () => {

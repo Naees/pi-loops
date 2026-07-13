@@ -133,6 +133,7 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
   }
 
   async evaluate(input: EvaluationInput, signal?: AbortSignal): Promise<EvaluationDecision> {
+    if (signal?.aborted) throw new DOMException("Evaluator was aborted", "AbortError");
     const boundedInput = boundedEvaluationInput(input);
     const deterministicFailures = boundedInput.verifierEvidence.filter((evidence) => !evidence.passed);
     if (deterministicFailures.length > 0) return createDeterministicFailureDecision(deterministicFailures);
@@ -141,6 +142,7 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
     if (!model) throw new EvaluatorUnavailableError("No Pi model is selected");
 
     const auth = await this.#context.modelRegistry.getApiKeyAndHeaders(model);
+    if (signal?.aborted) throw new DOMException("Evaluator was aborted", "AbortError");
     if (!auth.ok || !auth.apiKey) {
       throw new EvaluatorUnavailableError(auth.ok ? `No API key is available for ${model.provider}` : auth.error);
     }
