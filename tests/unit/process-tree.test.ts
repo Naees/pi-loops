@@ -1,4 +1,5 @@
-import type { execFile as execFileType } from "node:child_process";
+import type { spawn as spawnType } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveWindowsTaskkill, terminateProcessTree } from "../../src/worker/process-tree.js";
@@ -19,23 +20,24 @@ describe("process-tree termination", () => {
 
   it("uses the absolute Windows system taskkill without a shell", async () => {
     const calls: unknown[][] = [];
-    const implementation = ((file: string, args: readonly string[], options: unknown, callback: (error: Error | null) => void) => {
+    const implementation = ((file: string, args: readonly string[], options: unknown) => {
       calls.push([file, args, options]);
-      callback(null);
-      return {};
-    }) as unknown as typeof execFileType;
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit("exit", 0, null));
+      return child;
+    }) as unknown as typeof spawnType;
 
     await terminateProcessTree(789, {
       platform: "win32",
       force: true,
       environment: { SystemRoot: "/windows" },
-      execFile: implementation,
+      spawn: implementation,
     });
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[0]).toBe(join("/windows", "System32", "taskkill.exe"));
     expect(calls[0]?.[1]).toEqual(["/T", "/PID", "789", "/F"]);
-    expect(calls[0]?.[2]).toEqual(expect.objectContaining({ windowsHide: true, timeout: 10_000 }));
+    expect(calls[0]?.[2]).toEqual(expect.objectContaining({ detached: true, windowsHide: true, timeout: 10_000 }));
   });
 
   it("rejects invalid PIDs and untrusted Windows system roots", async () => {

@@ -1,15 +1,14 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { isAbsolute, join } from "node:path";
 
 const TASKKILL_TIMEOUT_MS = 10_000;
-const MAX_TASKKILL_OUTPUT_BYTES = 64 * 1024;
 
 export interface ProcessTreeTerminationOptions {
   readonly force?: boolean;
   readonly platform?: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly kill?: typeof process.kill;
-  readonly execFile?: typeof import("node:child_process").execFile;
+  readonly spawn?: typeof import("node:child_process").spawn;
 }
 
 function positivePid(pid: number): void {
@@ -25,15 +24,27 @@ export function resolveWindowsTaskkill(environment: NodeJS.ProcessEnv = process.
 function runTaskkill(
   executable: string,
   args: readonly string[],
-  implementation: typeof import("node:child_process").execFile,
+  implementation: typeof import("node:child_process").spawn,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    implementation(executable, [...args], {
-      encoding: "utf8",
-      maxBuffer: MAX_TASKKILL_OUTPUT_BYTES,
+    const child = implementation(executable, [...args], {
+      stdio: "ignore",
+      shell: false,
+      detached: true,
       timeout: TASKKILL_TIMEOUT_MS,
       windowsHide: true,
-    }, (error) => error ? reject(error) : resolve());
+    });
+    let settled = false;
+    const finish = (operation: () => void): void => {
+      if (settled) return;
+      settled = true;
+      operation();
+    };
+    child.once("error", (error) => finish(() => reject(error)));
+    child.once("exit", (code, signal) => finish(() => {
+      if (code === 0) resolve();
+      else reject(new Error(`taskkill failed: ${JSON.stringify({ code, signal })}`));
+    }));
   });
 }
 
@@ -46,7 +57,7 @@ export async function terminateProcessTree(pid: number, options: ProcessTreeTerm
     await runTaskkill(
       resolveWindowsTaskkill(options.environment),
       args,
-      options.execFile ?? execFile,
+      options.spawn ?? spawn,
     );
     return;
   }
