@@ -28,13 +28,13 @@ describe("Windows deadline sentinel", () => {
     }) as unknown as typeof spawnType;
 
     const sentinel = launchWindowsDeadlineSentinel(123, Date.now() + 60_000, {
-      environment: { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" },
+      environment: { ProgramFiles: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" },
       spawn: implementation,
     });
     await sentinel.ready;
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.[0]).toBe(win32.join("C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+    expect(calls[0]?.[0]).toBe(win32.join("C:\\Program Files", "PowerShell", "7", "pwsh.exe"));
     const args = calls[0]?.[1] as string[];
     const scriptIndex = args.indexOf("-File") + 1;
     expect(isAbsolute(args[scriptIndex] ?? "")).toBe(true);
@@ -47,7 +47,7 @@ describe("Windows deadline sentinel", () => {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: expect.objectContaining({ SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" }),
+      env: expect.objectContaining({ ProgramFiles: "C:\\Program Files", TEMP: "C:\\Temp", SECRET_VALUE: "fixture-value" }),
     }));
     expect(childUnref).toHaveBeenCalledOnce();
     expect(stdoutUnref).toHaveBeenCalledOnce();
@@ -64,6 +64,6 @@ describe("Windows deadline sentinel", () => {
     }
     expect(() => launchWindowsDeadlineSentinel(123, Date.now() - 1)).toThrow("future absolute deadline");
     expect(() => launchWindowsDeadlineSentinel(123, Date.now() + 60_000, { environment: {} }))
-      .toThrow("absolute system root");
+      .toThrow("absolute Program Files root");
   });
 });

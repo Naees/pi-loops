@@ -16,12 +16,6 @@ export interface DeadlineSentinelOptions {
   readonly statusPath?: string;
 }
 
-function windowsSystemRoot(environment: NodeJS.ProcessEnv): string {
-  const root = environment.SystemRoot ?? environment.SYSTEMROOT ?? environment.windir ?? environment.WINDIR;
-  if (!root || !win32.isAbsolute(root)) throw new Error("Windows deadline sentinel requires an absolute system root");
-  return root;
-}
-
 export function launchWindowsDeadlineSentinel(
   targetPid: number,
   absoluteDeadlineMs: number,
@@ -36,7 +30,11 @@ export function launchWindowsDeadlineSentinel(
   }
 
   const environment = options.environment ?? process.env;
-  const executable = win32.join(windowsSystemRoot(environment), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const programFiles = environment.ProgramW6432 ?? environment.ProgramFiles;
+  if (!programFiles || !win32.isAbsolute(programFiles)) {
+    throw new Error("Windows deadline sentinel requires an absolute Program Files root");
+  }
+  const executable = win32.join(programFiles, "PowerShell", "7", "pwsh.exe");
   const script = fileURLToPath(new URL("./windows-job-sentinel.ps1", import.meta.url));
   const implementation = options.spawn ?? spawn;
   const child: ChildProcess = implementation(executable, [
