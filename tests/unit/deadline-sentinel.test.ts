@@ -9,14 +9,17 @@ describe("Windows deadline sentinel", () => {
     const calls: unknown[][] = [];
     const childUnref = vi.fn();
     const stdoutUnref = vi.fn();
+    const stderrUnref = vi.fn();
     const kill = vi.fn();
     const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn(), unref: stdoutUnref });
+    const stderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn(), unref: stderrUnref });
     const implementation = ((file: string, args: readonly string[], options: unknown) => {
       calls.push([file, args, options]);
       const child = Object.assign(new EventEmitter(), {
         exitCode: null,
         signalCode: null,
         stdout,
+        stderr,
         unref: childUnref,
         kill,
       });
@@ -25,7 +28,7 @@ describe("Windows deadline sentinel", () => {
     }) as unknown as typeof spawnType;
 
     const sentinel = launchWindowsDeadlineSentinel(123, Date.now() + 60_000, {
-      environment: { SystemRoot: "C:\\Windows", SECRET_VALUE: "must-not-propagate" },
+      environment: { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp", SECRET_VALUE: "must-not-propagate" },
       spawn: implementation,
     });
     await sentinel.ready;
@@ -42,12 +45,13 @@ describe("Windows deadline sentinel", () => {
     expect(calls[0]?.[2]).toEqual(expect.objectContaining({
       detached: true,
       shell: false,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      env: { SystemRoot: "C:\\Windows" },
+      env: { SystemRoot: "C:\\Windows", TEMP: "C:\\Temp" },
     }));
     expect(childUnref).toHaveBeenCalledOnce();
     expect(stdoutUnref).toHaveBeenCalledOnce();
+    expect(stderrUnref).toHaveBeenCalledOnce();
 
     sentinel.stop();
     sentinel.stop();

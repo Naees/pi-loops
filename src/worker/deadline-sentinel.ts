@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { isAbsolute, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SENTINEL_READY_TIMEOUT_MS = 10_000;
+const SENTINEL_READY_TIMEOUT_MS = 20_000;
 
 export interface DeadlineSentinel {
   readonly ready: Promise<void>;
@@ -24,7 +24,7 @@ function windowsSystemRoot(environment: NodeJS.ProcessEnv): string {
 
 function safeWindowsEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const safe: NodeJS.ProcessEnv = {};
-  for (const name of ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"] as const) {
+  for (const name of ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR", "TEMP", "TMP"] as const) {
     const value = environment[name];
     if (value !== undefined) safe[name] = value;
   }
@@ -61,12 +61,13 @@ export function launchWindowsDeadlineSentinel(
     detached: true,
     env: safeWindowsEnvironment(environment),
     shell: false,
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
   let stopped = false;
   let readySettled = false;
   let output = "";
+  let stderr = "";
   let readyResolve: (() => void) | undefined;
   let readyReject: ((error: Error) => void) | undefined;
   const ready = new Promise<void>((resolve, reject) => {
@@ -76,7 +77,7 @@ export function launchWindowsDeadlineSentinel(
   const readyTimer = setTimeout(() => {
     if (readySettled || stopped) return;
     readySettled = true;
-    const error = new Error("Windows deadline sentinel did not become ready");
+    const error = new Error(`Windows deadline sentinel did not become ready${stderr ? `: ${stderr}` : ""}`);
     readyReject?.(error);
     options.onError?.(error);
     child.kill();
@@ -92,6 +93,10 @@ export function launchWindowsDeadlineSentinel(
     }
     options.onError?.(error);
   };
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-32 * 1024);
+  });
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     if (readySettled) return;
@@ -105,10 +110,11 @@ export function launchWindowsDeadlineSentinel(
   child.once("error", report);
   child.once("exit", (code, signal) => {
     if (code !== 0 && !stopped) {
-      report(new Error(`Deadline sentinel exited unsuccessfully: ${JSON.stringify({ code, signal })}`));
+      report(new Error(`Deadline sentinel exited unsuccessfully: ${JSON.stringify({ code, signal, stderr })}`));
     }
   });
   (child.stdout as (NodeJS.ReadableStream & { unref(): void }) | null)?.unref();
+  (child.stderr as (NodeJS.ReadableStream & { unref(): void }) | null)?.unref();
   child.unref();
 
   return {
