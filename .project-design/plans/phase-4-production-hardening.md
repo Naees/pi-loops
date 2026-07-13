@@ -121,7 +121,8 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Found and fixed four remaining unbounded or growth-after-stat JSON file reads: notice state, lease metadata, project package inference, and current-Pi package identity now use the single-handle bounded reader.
 - Pinned every external GitHub Action to the exact previously tested commit SHA and added a policy test/security gate that rejects mutable workflow references.
 - Added malformed/oversized notice, oversized lease metadata, and oversized current-Pi manifest coverage; focused tests pass.
-- No critical/high finding is open locally. Hosted CI/CodeQL and the complete release-candidate matrix remain required before delivery slice 4 is closed.
+- The complete authenticated local release-candidate gate passed with 59 test files / 352 tests, 93.32% line coverage, 84.12% branch coverage, and forced parent death 10/10.
+- Hosted Node 22.19/24 CI, packed package/state jobs, current-major immutable Actions, and CodeQL passed at `db0cdc5` with zero open alerts. No critical/high finding remains; delivery slice 4 is closed.
 
 ## Initial disposition
 

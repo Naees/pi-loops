@@ -1,7 +1,7 @@
 # Phase 4 security and production-readiness review
 
 **Date:** 2026-07-13
-**Status:** First comprehensive pass complete; hosted revalidation pending for the latest hardening changes
+**Status:** Comprehensive pass complete for the current Phase 4 release-candidate scope; hosted CI and CodeQL green with zero open alerts
 **Scope:** macOS/Pi 0.80.6 release candidate, package/update boundary, and platform-neutral state/event parsing
 **Out of scope:** Native Linux and Windows runtime qualification, which remains Phase 5
 
@@ -99,7 +99,7 @@ Controls verified:
 - npm audit reports zero vulnerabilities. No production dependency is currently outdated.
 - Package `files` is an explicit allowlist; `.project-design/`, tests, coverage, subagent artifacts, and development scripts are rejected from tarballs.
 - Tracked/untracked text files are scanned for high-confidence private-key, AWS, GitHub, and npm token patterns with bounded file reads and no secret-value logging.
-- All external GitHub Actions are pinned to tested immutable 40-character commit SHAs. The security policy test rejects mutable action tags/branches.
+- All external GitHub Actions are updated to their reviewed current majors and pinned to tested immutable 40-character commit SHAs. The security policy test rejects mutable action tags/branches.
 - CI permissions are read-only by default and elevated only to `security-events: write` for CodeQL.
 - Release-candidate automation creates checksummed review artifacts and cannot publish. Final publication additionally requires a clean tree, removal of internal design artifacts, and authenticated runtime gates.
 
@@ -127,8 +127,9 @@ No critical/high finding is open.
 
 ## Remaining Phase 4 security work
 
-- Re-run hosted CodeQL/CI after the bounded-read and immutable-action changes and confirm zero open alerts.
-- Review and either merge or close each Dependabot update independently; do not batch unreviewed major toolchain changes.
+Hosted Node 22.19/24 CI, packed state/package jobs, immutable current-major Actions, and CodeQL passed at `db0cdc5`; code scanning has zero open alerts. The authenticated local runtime release-candidate gate also passed with 59 test files / 352 tests, 93.32% line coverage, 84.12% branch coverage, and forced parent death 10/10.
+
+- Review and either merge or close each remaining development-only Dependabot update independently; do not batch unreviewed major toolchain changes.
 - Preserve final SBOM, tarball checksum, package inventory, workflow run URLs, runtime lifecycle output, and npm-scope access evidence with the release candidate.
 - Perform one final source/diff review after public documentation and release-candidate changes settle.
 
