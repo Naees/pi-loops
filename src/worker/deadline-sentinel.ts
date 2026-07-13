@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export interface DeadlineSentinel {
@@ -9,6 +10,7 @@ export interface DeadlineSentinelOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly spawn?: typeof spawn;
   readonly onError?: (error: Error) => void;
+  readonly statusPath?: string;
 }
 
 function safeWindowsEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -29,10 +31,18 @@ export function launchWindowsDeadlineSentinel(
   if (!Number.isSafeInteger(absoluteDeadlineMs) || absoluteDeadlineMs <= Date.now()) {
     throw new Error("Deadline sentinel requires a future absolute deadline");
   }
+  if (options.statusPath !== undefined && !isAbsolute(options.statusPath)) {
+    throw new Error("Deadline sentinel status path must be absolute");
+  }
 
   const implementation = options.spawn ?? spawn;
   const script = fileURLToPath(new URL("./deadline-sentinel-child.ts", import.meta.url));
-  const child: ChildProcess = implementation(process.execPath, [script, String(targetPid), String(absoluteDeadlineMs)], {
+  const child: ChildProcess = implementation(process.execPath, [
+    script,
+    String(targetPid),
+    String(absoluteDeadlineMs),
+    ...(options.statusPath === undefined ? [] : [options.statusPath]),
+  ], {
     detached: true,
     env: safeWindowsEnvironment(options.environment ?? process.env),
     shell: false,

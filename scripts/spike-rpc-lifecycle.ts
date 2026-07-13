@@ -371,6 +371,7 @@ async function runParentScenario(
   const root = await mkdtemp(join(tmpdir(), `pi-loops-parent-${termination.toLowerCase()}-`));
   const stateFile = join(root, "parent-state.json");
   const pidFile = join(root, "descendants.json");
+  const sentinelStatusFile = join(root, "sentinel-status.json");
   const sessionDirectory = join(root, "sessions");
   const helperPath = resolve("scripts/fixtures/rpc-lifecycle-parent.ts");
   const { worktree } = await createWorktree(root);
@@ -386,6 +387,7 @@ async function runParentScenario(
     stateFile,
     pidFile,
     String(deadlineMs),
+    sentinelStatusFile,
   ], {
     cwd: process.cwd(),
     shell: false,
@@ -430,7 +432,13 @@ async function runParentScenario(
     ]);
   } finally {
     if (helper.exitCode === null && helper.signalCode === null) helper.kill("SIGKILL");
-    await removeTemporaryRoot(root);
+    try {
+      await removeTemporaryRoot(root);
+    } catch (error) {
+      const sentinelStatus = await readFile(sentinelStatusFile, "utf8").catch((statusError: NodeJS.ErrnoException) =>
+        `unavailable:${statusError.code ?? statusError.message}`);
+      throw new Error(`Lifecycle cleanup failed; sentinel=${sentinelStatus}`, { cause: error });
+    }
   }
 
   if (forced) process.stdout.write(`forced-parent-death ${iteration}/10 passed\n`);

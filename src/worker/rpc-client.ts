@@ -18,6 +18,7 @@ export interface RpcWorkerClientOptions {
   readonly platform?: NodeJS.Platform;
   readonly terminateProcessTree?: (pid: number, force: boolean) => Promise<void>;
   readonly absoluteDeadlineMs?: number;
+  readonly deadlineSentinelStatusPath?: string;
   readonly launchDeadlineSentinel?: (
     pid: number,
     absoluteDeadlineMs: number,
@@ -126,7 +127,11 @@ export class RpcWorkerClient {
     const shouldLaunchSentinel = this.#platform === "win32" && options.absoluteDeadlineMs !== undefined &&
       (process.platform === "win32" || options.launchDeadlineSentinel !== undefined);
     const sentinelFactory = options.launchDeadlineSentinel ?? ((pid: number, deadlineMs: number, onError: (error: Error) => void) =>
-      launchWindowsDeadlineSentinel(pid, deadlineMs, { environment: options.environment, onError }));
+      launchWindowsDeadlineSentinel(pid, deadlineMs, {
+        environment: options.environment,
+        onError,
+        ...(options.deadlineSentinelStatusPath === undefined ? {} : { statusPath: options.deadlineSentinelStatusPath }),
+      }));
     this.#deadlineSentinel = shouldLaunchSentinel
       ? sentinelFactory(this.pid, options.absoluteDeadlineMs!, (error) => this.#fail(error))
       : undefined;

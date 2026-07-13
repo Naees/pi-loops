@@ -6,7 +6,7 @@ import { RpcSpikeClient, type RpcEnvelope } from "./rpc-spike-client.ts";
 
 function requiredArgument(index: number): string {
   const value = process.argv[index + 2];
-  if (!value) throw new Error("Usage: rpc-lifecycle-parent <executable> <args-prefix-json> <cwd> <session-dir> <state-file> <pid-file> <deadline-ms>");
+  if (!value) throw new Error("Usage: rpc-lifecycle-parent <executable> <args-prefix-json> <cwd> <session-dir> <state-file> <pid-file> <deadline-ms> <sentinel-status-file>");
   return value;
 }
 
@@ -21,6 +21,7 @@ const sessionDirectory = requiredArgument(3);
 const stateFile = requiredArgument(4);
 const pidFile = requiredArgument(5);
 const deadlineMs = Number(requiredArgument(6));
+const sentinelStatusFile = requiredArgument(7);
 if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= Date.now()) throw new Error("Parent helper requires a future deadline");
 
 const extensionPath = resolve("scripts/fixtures/rpc-lifecycle-extension.ts");
@@ -46,6 +47,7 @@ const client = new RpcSpikeClient(executable, [...argsPrefix, ...args], {
     PI_LOOPS_SPIKE_PID_FILE: pidFile,
   },
   absoluteDeadlineMs: deadlineMs,
+  deadlineSentinelStatusPath: sentinelStatusFile,
 });
 
 let shuttingDown = false;

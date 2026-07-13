@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { terminateProcessTree } from "./process-tree.ts";
 
 function positiveInteger(value: string | undefined, name: string): number {
@@ -19,16 +20,33 @@ function targetExists(pid: number): boolean {
 
 const targetPid = positiveInteger(process.argv[2], "target PID");
 const absoluteDeadlineMs = positiveInteger(process.argv[3], "absolute deadline");
+const statusPath = process.argv[4];
 // Win32 child processes can be reparented as soon as Pi begins its own
 // deadline shutdown. Snapshot and terminate the intact tree first, while
 // retaining the final second as the bounded shutdown margin.
 const terminationAtMs = Math.max(Date.now(), absoluteDeadlineMs - 1_000);
 
-while (targetExists(targetPid)) {
-  const remainingMs = terminationAtMs - Date.now();
-  if (remainingMs <= 0) {
-    await terminateProcessTree(targetPid, { platform: "win32", force: true });
-    break;
+async function record(phase: string, detail?: string): Promise<void> {
+  if (statusPath === undefined) return;
+  await writeFile(statusPath, JSON.stringify({ phase, detail, sentinelPid: process.pid, targetPid, absoluteDeadlineMs, terminationAtMs }), "utf8");
+}
+
+try {
+  await record("watching");
+  let attemptedTermination = false;
+  while (targetExists(targetPid)) {
+    const remainingMs = terminationAtMs - Date.now();
+    if (remainingMs <= 0) {
+      attemptedTermination = true;
+      await record("terminating");
+      await terminateProcessTree(targetPid, { platform: "win32", force: true });
+      await record("terminated");
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(remainingMs, 250)));
   }
-  await new Promise((resolve) => setTimeout(resolve, Math.min(remainingMs, 250)));
+  if (!attemptedTermination) await record("target-exited");
+} catch (error) {
+  await record("failed", error instanceof Error ? error.message : String(error)).catch(() => undefined);
+  throw error;
 }

@@ -10,6 +10,7 @@ export interface RpcSpikeClientOptions {
   readonly maxStderrBytes?: number;
   readonly maxRetainedMessageBytes?: number;
   readonly absoluteDeadlineMs?: number;
+  readonly deadlineSentinelStatusPath?: string;
 }
 
 export class RpcSpikeClient {
@@ -26,6 +27,7 @@ export class RpcSpikeClient {
       ...(options.maxStderrBytes === undefined ? {} : { maxStderrBytes: options.maxStderrBytes }),
       ...(options.maxRetainedMessageBytes === undefined ? {} : { maxRetainedEventBytes: options.maxRetainedMessageBytes }),
       ...(options.absoluteDeadlineMs === undefined ? {} : { absoluteDeadlineMs: options.absoluteDeadlineMs }),
+      ...(options.deadlineSentinelStatusPath === undefined ? {} : { deadlineSentinelStatusPath: options.deadlineSentinelStatusPath }),
     });
   }
 
