@@ -55,7 +55,8 @@ jobs:
           node-version: 22.19.0
           cache: npm
       - run: npm ci
-      - if: runner.os == 'Windows'
+      - name: Validate Windows kill-on-close job object
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $target = Start-Process "$env:SystemRoot\System32\ping.exe" -ArgumentList '-t','127.0.0.1' -PassThru

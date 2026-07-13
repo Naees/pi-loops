@@ -16,6 +16,14 @@ export interface DeadlineSentinelOptions {
   readonly statusPath?: string;
 }
 
+function environmentValue(environment: NodeJS.ProcessEnv, ...names: readonly string[]): string | undefined {
+  const wanted = new Set(names.map((name) => name.toUpperCase()));
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined && wanted.has(name.toUpperCase())) return value;
+  }
+  return undefined;
+}
+
 export function launchWindowsDeadlineSentinel(
   targetPid: number,
   absoluteDeadlineMs: number,
@@ -30,7 +38,7 @@ export function launchWindowsDeadlineSentinel(
   }
 
   const environment = options.environment ?? process.env;
-  const programFiles = environment.ProgramW6432 ?? environment.ProgramFiles;
+  const programFiles = environmentValue(environment, "ProgramW6432", "ProgramFiles");
   if (!programFiles || !win32.isAbsolute(programFiles)) {
     throw new Error("Windows deadline sentinel requires an absolute Program Files root");
   }
