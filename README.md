@@ -1,6 +1,6 @@
 # Pi Loops
 
-> **Status: attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6; Phase 4 production hardening is in progress and no public npm release exists yet.**
+> **Status: attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6; Phase 4 production hardening is complete, Phase 5 platform qualification remains, and no public npm release exists yet.**
 
 Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
 
@@ -243,7 +243,7 @@ No project configuration file will be created automatically.
 - Model-facing firing of confirmed trigger definitions.
 - Debounce, coalescing, restart, and trigger-storm protection.
 
-### Phase 4 — Production hardening (in progress)
+### Phase 4 — Production hardening (complete for the validated macOS scope)
 
 - State migrations and compatibility hardening.
 - Comprehensive security audit.
@@ -273,7 +273,7 @@ Report security issues through the private process documented in [`SECURITY.md`]
 
 ## Project status
 
-The product contract and architecture are approved. Attended goals, scheduling, and proactive triggers are implemented for macOS/Pi 0.80.6. Phase 4 production hardening is in progress; Linux/Windows qualification remains Phase 5 work. No public npm release should be assumed from this README.
+The product contract and architecture are approved. Attended goals, scheduling, proactive triggers, and Phase 4 production hardening are complete for macOS/Pi 0.80.6. Linux/Windows qualification and the final publication gate remain Phase 5 work. No public npm release should be assumed from this README.
 
 The internal design brief is maintained temporarily under `.project-design/` during development. That directory will be removed before the first public release, after preserving relevant user-facing information here.
 

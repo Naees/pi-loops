@@ -111,7 +111,7 @@ Controls verified:
 | P4-SEC-002 | Medium | GitHub Actions used mutable major-version references, allowing tag movement to change release automation without repository review. | Fixed. Every external action is pinned to the exact tested commit SHA, and `security:check` enforces immutable refs. |
 | P4-SEC-003 | Medium | A malformed-response test interpolated serialized fixture data into `node -e` source, triggering CodeQL improper-sanitization analysis. | Fixed. Fixture envelopes cross through a dedicated data value; hosted CodeQL revalidation closed the alert. |
 | P4-REL-001 | Medium availability | The npm 11-generated lockfile omitted optional metadata required by npm 10 clean installation. | Fixed. Lockfile regenerated with npm 10.9.3; clean npm 10/current installs and hosted Node 22.19/24 CI pass. |
-| P4-REL-002 | Medium release integrity | The first downloaded release-candidate checksum named `artifacts/<tarball>`, but artifact download places files at the artifact root, so `shasum -c` could not locate the tarball. | Fixed. Checksums are generated from inside the artifact directory and contain artifact-relative names; local verification passes and hosted artifact regeneration is required. |
+| P4-REL-002 | Medium release integrity | The first downloaded release-candidate checksum named `artifacts/<tarball>`, but artifact download places files at the artifact root, so `shasum -c` could not locate the tarball. | Fixed. Checksums are generated and verified inside the artifact directory. Regenerated hosted artifact `29236169822` verified successfully after download. |
 
 No critical/high finding is open.
 
@@ -126,12 +126,12 @@ No critical/high finding is open.
 - Provider-side cost accounting is outside Pi Loops; finite local budgets are not a guaranteed monetary cap.
 - Linux and Windows unattended execution remain fail-closed until native Phase 5 matrices pass.
 
-## Remaining Phase 4 security work
+## Closure evidence
 
-Hosted Node 22.19/24 CI, packed state/package jobs, immutable current-major Actions, and CodeQL passed at `db0cdc5`; code scanning has zero open alerts. The authenticated local runtime release-candidate gate also passed with 59 test files / 352 tests, 93.32% line coverage, 84.12% branch coverage, and forced parent death 10/10.
+Hosted Node 22.19/24 CI, packed state/package jobs, immutable current-major Actions, and CodeQL passed at `a154c4e`; code scanning has zero open alerts. The final authenticated local runtime release-candidate gate passed with 59 test files / 352 tests, 93.22% line coverage, 83.98% branch coverage, and forced parent death 10/10.
 
-- Review and either merge or close each remaining development-only Dependabot update independently; do not batch unreviewed major toolchain changes.
-- Preserve final SBOM, tarball checksum, package inventory, workflow run URLs, runtime lifecycle output, and npm-scope access evidence with the release candidate.
-- Perform one final source/diff review after public documentation and release-candidate changes settle.
+- All generated development-only Dependabot updates were reviewed independently and closed to preserve the validated Pi/Node/compiler/test-toolchain matrix; no production dependency update is pending.
+- Final SBOM, tarball checksum, package inventory, workflow run URLs, runtime lifecycle output, and npm-scope status are preserved in `.project-design/release/phase-4-readiness.md`.
+- Final source/diff review after public documentation and release-candidate changes found no open critical/high security issue.
 
 This report is not a publication authorization and does not expand platform support.

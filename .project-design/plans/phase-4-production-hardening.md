@@ -1,6 +1,6 @@
 # Phase 4 — Production hardening
 
-**Status:** In progress
+**Status:** Complete for the validated macOS/Pi 0.80.6 scope; Phase 5 may begin
 **Started:** 2026-07-13
 **Prerequisite:** Phases 0–3 complete for the validated macOS/Pi 0.80.6 scope
 **Platform boundary:** Linux and Windows unattended execution remain fail-closed until Phase 5 native qualification.
@@ -131,7 +131,8 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - CI/release-candidate artifacts now include npm's JSON file inventory, CycloneDX SBOM, tarball, and SHA-256 checksum.
 - Added `release:dry-run`, which validates the exact npm publication report, forbidden/required files, public identity, provenance policy, and absence of bundled dependencies without publishing.
 - The publication dry-run passed. Live `npm whoami` now returns `E401`, so publisher authentication must be restored explicitly before final publication; Pi Loops does not inspect or modify npm credentials.
-- Local authenticated release-candidate, Node 22.19/24 CI, CodeQL, package/state jobs, publication dry-run, and the first manual artifact workflow passed. Download verification exposed an artifact-relative checksum-path defect; checksum generation was corrected locally and hosted artifact regeneration remains required before delivery slice 5 and Phase 4 can close.
+- Local authenticated release-candidate, Node 22.19/24 CI, CodeQL, package/state jobs, and publication dry-run passed. Download verification exposed an artifact-relative checksum-path defect; it was fixed and the regenerated hosted artifact verified successfully after download.
+- Manual release-candidate run `29236169822` produced a 67-file tarball, CycloneDX SBOM, npm JSON inventory, and valid SHA-256 checksum. Delivery slice 5 and Phase 4 are closed for the validated macOS/Pi 0.80.6 scope.
 
 ## Initial disposition
 
