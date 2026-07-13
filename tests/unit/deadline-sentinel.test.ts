@@ -43,7 +43,7 @@ describe("Windows deadline sentinel", () => {
       "-AbsoluteDeadlineMs", expect.stringMatching(/^\d+$/),
     ]));
     expect(calls[0]?.[2]).toEqual(expect.objectContaining({
-      detached: true,
+      detached: false,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,

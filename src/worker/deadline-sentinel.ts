@@ -47,7 +47,7 @@ export function launchWindowsDeadlineSentinel(
     "-AbsoluteDeadlineMs", String(absoluteDeadlineMs),
     ...(options.statusPath === undefined ? [] : ["-StatusPath", options.statusPath]),
   ], {
-    detached: true,
+    detached: false,
     env: environment,
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
