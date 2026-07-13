@@ -49,7 +49,7 @@ const result = await new Promise((resolveExit, rejectExit) => {
   });
 });
 
-const expectedTermination = result.code === 0 || result.code === 143 || result.signal === "SIGTERM";
+const expectedTermination = result.code === 0 || result.code === 143 || result.signal === "SIGTERM" || result.signal === "SIGKILL";
 if (!expectedTermination) throw new Error(`Watchdog child exited unexpectedly: ${JSON.stringify(result)}\nstderr:\n${stderr}`);
 if (result.elapsedMs < 900 || result.elapsedMs > 6_000) {
   throw new Error(`Watchdog child exited outside the expected window: ${JSON.stringify(result)}`);

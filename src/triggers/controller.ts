@@ -2,6 +2,7 @@ import { createCompletionContract } from "../contracts/completion-contract.js";
 import { resolveProjectBinding, type ProjectBinding } from "../contracts/project-binding.js";
 import { resolveBudget, createUniqueRunId } from "../controller/attended-goal-support.js";
 import { isResumableRun } from "../controller/state-machine.js";
+import type { ScheduleOccurrenceKind, ScheduleOccurrenceResult } from "../scheduler/scheduler.js";
 import { AsyncSerialQueue } from "../shared/async-queue.js";
 import { errorMessage } from "../shared/errors.js";
 import { allocateUniqueId } from "../shared/id-allocation.js";
@@ -42,19 +43,22 @@ export interface TriggerHost {
   notify(message: string, level: "info" | "warning" | "error"): void;
 }
 
-export type TriggerOccurrenceKind = "start" | "restart";
+export type TriggerOccurrenceKind = ScheduleOccurrenceKind;
 export type TriggerOccurrenceRunner = (
   trigger: TriggerRecord,
   runId: string,
   signal: AbortSignal,
   kind: TriggerOccurrenceKind,
-) => Promise<{ readonly status: "finished" | "interrupted" }>;
+) => Promise<ScheduleOccurrenceResult>;
 
 interface ActiveOccurrence {
   readonly runId: string;
   readonly abort: AbortController;
-  readonly claim: WriterLease;
   readonly promise: Promise<void>;
+}
+
+function isActiveOccurrence(trigger: Pick<TriggerRecord, "state">): boolean {
+  return trigger.state === "running" || trigger.state === "pending_coalesced";
 }
 
 export class TriggerController {
@@ -190,7 +194,7 @@ export class TriggerController {
         throw new Error(expectedSource === "event" ? `Event trigger not found: ${triggerId}` : `Trigger not found: ${triggerId}`);
       }
       if (current.state === "paused") return "ignored";
-      const alreadyRunning = current.state === "running" || current.state === "pending_coalesced";
+      const alreadyRunning = isActiveOccurrence(current);
       const lastTriggeredMs = current.lastTriggeredAt ? Date.parse(current.lastTriggeredAt) : Number.NaN;
       const deliveryDeltaMs = this.#now().getTime() - lastTriggeredMs;
       const duplicateFilesystemDelivery = alreadyRunning && !this.#active.has(triggerId) && current.source.kind === "filesystem" &&
@@ -218,7 +222,7 @@ export class TriggerController {
           await this.#claims.assert(claim);
           let latest = await store.load(triggerId);
           if (!latest) throw new Error(`Trigger not found: ${triggerId}`);
-          if ((latest.state === "running" || latest.state === "pending_coalesced") && latest.activeRunId) {
+          if (isActiveOccurrence(latest) && latest.activeRunId) {
             latest = interruptTriggerOccurrence(latest, latest.activeRunId, this.#now());
           }
           const decision = fireTrigger(latest, runId, this.#now());
@@ -330,7 +334,7 @@ export class TriggerController {
       await this.#withMutableStore(binding, async (store) => {
         const trigger = await store.load(triggerId);
         if (!trigger) throw new Error(`Trigger not found: ${triggerId}`);
-        if (trigger.state === "running" || trigger.state === "pending_coalesced") {
+        if (isActiveOccurrence(trigger)) {
           throw new Error(`Stop the active proactive run before deleting ${triggerId}`);
         }
         await store.delete(triggerId);
@@ -363,7 +367,7 @@ export class TriggerController {
     const promise = (async () => {
       let transferred = false;
       try {
-        let result: { status: "finished" | "interrupted" };
+        let result: ScheduleOccurrenceResult;
         try {
           result = await runner(trigger, runId, abort.signal, kind);
         } catch (error) {
@@ -379,14 +383,14 @@ export class TriggerController {
       if (this.#active.get(trigger.triggerId)?.promise !== promise) return;
       this.#active.delete(trigger.triggerId);
     });
-    this.#active.set(trigger.triggerId, { runId, abort, claim, promise });
+    this.#active.set(trigger.triggerId, { runId, abort, promise });
     return true;
   }
 
   async #settle(
     triggerId: string,
     runId: string,
-    result: { status: "finished" | "interrupted" },
+    result: ScheduleOccurrenceResult,
     claim: WriterLease,
   ): Promise<boolean> {
     return this.#queue.run(async () => {
@@ -427,7 +431,7 @@ export class TriggerController {
     const binding = this.#binding;
     if (!binding) return;
     for (const trigger of await new TriggerStore(this.#dataRoot, binding.projectId).list()) {
-      if (trigger.state !== "running" && trigger.state !== "pending_coalesced") continue;
+      if (!isActiveOccurrence(trigger)) continue;
       let claim: WriterLease | undefined;
       try {
         claim = await this.#claims.acquire(binding, trigger.triggerId);
@@ -438,7 +442,7 @@ export class TriggerController {
       try {
         await this.#withMutableStore(binding, async (store) => {
           const latest = await store.load(trigger.triggerId);
-          if (latest && (latest.state === "running" || latest.state === "pending_coalesced") && latest.activeRunId) {
+          if (latest && isActiveOccurrence(latest) && latest.activeRunId) {
             await store.save(interruptTriggerOccurrence(latest, latest.activeRunId, this.#now()));
           }
         });

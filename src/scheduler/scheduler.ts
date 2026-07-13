@@ -69,6 +69,10 @@ interface ActiveOccurrence {
   readonly promise: Promise<void>;
 }
 
+function isActiveOccurrence(schedule: Pick<ScheduleRecord, "state">): boolean {
+  return schedule.state === "running" || schedule.state === "pending_coalesced";
+}
+
 export class ScheduleController {
   readonly #dataRoot: string;
   readonly #now: () => Date;
@@ -254,7 +258,7 @@ export class ScheduleController {
       await this.#withMutableStore(binding, async (store) => {
         const schedule = await store.load(scheduleId);
         if (!schedule) throw new Error(`Schedule not found: ${scheduleId}`);
-        if (schedule.state === "running" || schedule.state === "pending_coalesced") {
+        if (isActiveOccurrence(schedule)) {
           throw new Error(`Stop the active scheduled run before deleting ${scheduleId}`);
         }
         await store.delete(scheduleId);
@@ -295,7 +299,7 @@ export class ScheduleController {
     if (!binding) return;
     await this.#withMutableStore(binding, async (store) => {
       for (const schedule of await store.list()) {
-        if ((schedule.state === "running" || schedule.state === "pending_coalesced") && !this.#active.has(schedule.scheduleId)) {
+        if (isActiveOccurrence(schedule) && !this.#active.has(schedule.scheduleId)) {
           let claims: OccurrenceClaims | undefined;
           try {
             claims = await this.#occurrenceClaims.acquire(binding, schedule.scheduleId);
@@ -310,7 +314,7 @@ export class ScheduleController {
           }
           continue;
         }
-        if (schedule.state === "running" || schedule.state === "pending_coalesced" || !reconcileMissedEnabled) continue;
+        if (isActiveOccurrence(schedule) || !reconcileMissedEnabled) continue;
         const reconciled = reconcileMissedSchedule(schedule, this.#now());
         if (reconciled !== schedule) await store.save(reconciled);
       }
@@ -329,7 +333,7 @@ export class ScheduleController {
         if (schedule.nextFireAt === undefined || Date.parse(schedule.nextFireAt) > this.#now().getTime()) continue;
         const activeOccurrence = this.#active.get(schedule.scheduleId);
         const locallyActive = activeOccurrence !== undefined;
-        if ((schedule.state === "running" || schedule.state === "pending_coalesced") && !locallyActive) continue;
+        if (isActiveOccurrence(schedule) && !locallyActive) continue;
         if (activeOccurrence) await this.#occurrenceClaims.assert(activeOccurrence.claims);
         if (schedule.state === "enabled" && writerClaimed) continue;
         const runId = await createUniqueRunId(runStore);
@@ -542,8 +546,7 @@ export class ScheduleController {
         !(hasActiveOccurrence && schedule.state === "enabled" && Date.parse(schedule.nextFireAt) <= nowMs))
       .map((schedule) => Date.parse(schedule.nextFireAt as string))
       .filter(Number.isFinite);
-    if (schedules.some((schedule) =>
-      (schedule.state === "running" || schedule.state === "pending_coalesced") && !this.#active.has(schedule.scheduleId))) {
+    if (schedules.some((schedule) => isActiveOccurrence(schedule) && !this.#active.has(schedule.scheduleId))) {
       candidates.push(nowMs + this.#claimRecheckMs);
     }
     const nextMs = candidates.sort((left, right) => left - right)[0];

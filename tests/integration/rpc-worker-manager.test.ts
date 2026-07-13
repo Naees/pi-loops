@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QUALIFIED_UNATTENDED_PLATFORMS, RpcWorkerManager } from "../../src/worker/rpc-worker-manager.js";
+import {
+  QUALIFIED_UNATTENDED_PLATFORMS,
+  RpcWorkerManager,
+  type RpcWorkerQualificationOptions,
+} from "../../src/worker/rpc-worker-manager.js";
 import type { ParentWorkerUi } from "../../src/ui/worker-ui-relay.js";
 
 const temporaryDirectories: string[] = [];
@@ -52,7 +56,13 @@ process.stdin.on("data", chunk => {
 });
 `;
 
-async function harness(options: { program?: string; version?: string; platform?: NodeJS.Platform; qualifiedPlatforms?: readonly NodeJS.Platform[] } = {}) {
+async function harness(options: {
+  program?: string;
+  version?: string;
+  platform?: NodeJS.Platform;
+  qualifiedPlatforms?: readonly NodeJS.Platform[];
+  qualification?: RpcWorkerQualificationOptions;
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), "pi-loops-worker-manager-"));
   const cwd = join(root, "worktree");
   const sessions = join(root, "sessions");
@@ -78,6 +88,7 @@ async function harness(options: { program?: string; version?: string; platform?:
       version: options.version ?? "0.80.6",
       source: "current-node-cli",
     }),
+    ...(options.qualification === undefined ? {} : { qualification: options.qualification }),
   });
   const restore = (): void => {
     if (previousArgv === undefined) delete process.env.PI_LOOPS_TEST_ARGV;
@@ -130,6 +141,49 @@ describe("RPC worker manager", () => {
       await worker.stop();
     } finally {
       restore();
+    }
+  });
+
+  it("passes bounded native qualification arguments without shell interpolation", async () => {
+    const qualificationExtension = join(process.cwd(), "scripts", "fixtures", "rpc-lifecycle-extension.ts");
+    const { manager, cwd, sessions, argvFile, restore } = await harness({
+      qualification: {
+        extensionPaths: [qualificationExtension],
+        provider: "test-provider",
+        model: "test-model",
+      },
+    });
+    try {
+      const worker = await manager.launch({
+        runId: "run_1234abcd",
+        cwd,
+        sessionDirectory: sessions,
+        absoluteDeadlineMs: Date.now() + 60_000,
+      }, hostUi());
+      const launched = JSON.parse(await readFile(argvFile, "utf8")) as { argv: string[] };
+      const extensionPaths = launched.argv.flatMap((argument, index) =>
+        argument === "--extension" && launched.argv[index + 1] ? [launched.argv[index + 1] as string] : []);
+      expect(extensionPaths).toEqual(["/tmp/pi-loops-extension.ts", qualificationExtension]);
+      expect(launched.argv).toEqual(expect.arrayContaining([
+        "--provider", "test-provider",
+        "--model", "test-model",
+      ]));
+      await worker.stop();
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects unbounded or ambiguous native qualification options", () => {
+    const absoluteExtension = join(process.cwd(), "extension.ts");
+    for (const qualification of [
+      { extensionPaths: [], provider: "provider", model: "model" },
+      { extensionPaths: Array.from({ length: 11 }, () => absoluteExtension), provider: "provider", model: "model" },
+      { extensionPaths: ["relative.ts"], provider: "provider", model: "model" },
+      { extensionPaths: [absoluteExtension], provider: " ", model: "model" },
+      { extensionPaths: [absoluteExtension], provider: "provider", model: " " },
+    ]) {
+      expect(() => new RpcWorkerManager({ qualification })).toThrow("qualification options are invalid");
     }
   });
 

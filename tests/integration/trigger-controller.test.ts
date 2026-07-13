@@ -75,6 +75,7 @@ describe("trigger controller", () => {
       await expect(controller.fire(trigger.triggerId, host.cwd)).resolves.toBe("coalesced");
     }
     expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "pending_coalesced" }));
+    await expect(controller.delete(trigger.triggerId, host.cwd)).rejects.toThrow("Stop the active proactive run");
     finishFirst?.({ status: "finished" });
     await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2));
     await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "enabled" })));

@@ -10,6 +10,7 @@ describe("cross-platform script commands", () => {
       args: [npmCli, "pack", "--json"],
     });
     expect(() => npmInvocation([], {}, "win32")).toThrow("absolute npm_execpath");
+    expect(npmInvocation(["ci"], {}, "linux")).toEqual({ executable: "npm", args: ["ci"] });
   });
 
   it("launches the local Vitest JavaScript entry point through Node", () => {
@@ -23,5 +24,10 @@ describe("cross-platform script commands", () => {
     const cli = join(process.cwd(), "node_modules", "pi", "dist", "cli.js");
     expect(piInvocation({ PI_LOOPS_TEST_PI_CLI: cli })).toEqual({ executable: process.execPath, argsPrefix: [cli] });
     expect(() => piInvocation({ PI_LOOPS_TEST_PI_CLI: "relative-cli.js" })).toThrow("must be absolute");
+    expect(piInvocation({})).toEqual({ executable: "pi", argsPrefix: [] });
+    expect(piInvocation({ PI_LOOPS_TEST_PI: "/opt/pi with spaces/pi" })).toEqual({
+      executable: "/opt/pi with spaces/pi",
+      argsPrefix: [],
+    });
   });
 });

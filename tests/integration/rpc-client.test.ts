@@ -51,6 +51,25 @@ describe("production RPC worker client", () => {
     expect(stopSentinel).toHaveBeenCalledOnce();
   });
 
+  it("fails closed when Windows containment cannot become ready", async () => {
+    const sentinelError = new Error("job containment unavailable");
+    const stopSentinel = vi.fn();
+    const launchDeadlineSentinel = vi.fn((_pid: number, _deadlineMs: number, onError: (error: Error) => void) => {
+      queueMicrotask(() => onError(sentinelError));
+      return { ready: Promise.reject(sentinelError), stop: stopSentinel };
+    });
+    const rpc = client(lineServer, {
+      platform: "win32",
+      absoluteDeadlineMs: Date.now() + 60_000,
+      launchDeadlineSentinel,
+    });
+
+    await expect(rpc.waitForDeadlineSentinel()).rejects.toThrow("job containment unavailable");
+    await expect(rpc.request({ type: "get_state" })).rejects.toThrow("job containment unavailable");
+    await rpc.stop();
+    expect(stopSentinel).toHaveBeenCalledOnce();
+  });
+
   it("rejects invalid commands and maps failed RPC responses", async () => {
     const rpc = client(`let buffer = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", chunk => { buffer += chunk; let newline; while ((newline = buffer.indexOf("\\n")) !== -1) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); if (!line) continue; const command = JSON.parse(line); console.log(JSON.stringify({ type: "response", id: command.id, command: command.type, success: false, error: "request denied" })); } });`);
     await expect(rpc.request({})).rejects.toThrow("requires a type");

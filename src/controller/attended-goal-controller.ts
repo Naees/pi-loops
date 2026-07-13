@@ -142,13 +142,7 @@ export class AttendedGoalController {
         run = transitionRun(run, "running", "First attended work cycle started", this.#now());
         await store.save(run);
 
-        await assertControllerWriterLock(writerLock);
-        const active = this.#createActiveGoal(contract, store, writerLock, run);
-        this.#active = active;
-        this.#watchWriterLock(active, host);
-        await assertControllerWriterLock(writerLock);
-        this.#armDeadline(active, host);
-        host.appendRunEntry(run);
+        const active = await this.#activateGoal(contract, store, writerLock, run, host);
         host.notify(formatContract(run, contract), "info");
         host.sendWork(buildWorkMessage(active.run, active.contract, undefined), host.isIdle ? "immediate" : "followUp");
         return run;
@@ -359,13 +353,7 @@ export class AttendedGoalController {
         await store.save(run);
 
         const contract = createCompletionContract(run.goal, run.verifierCommands, run.constraints);
-        await assertControllerWriterLock(writerLock);
-        const active = this.#createActiveGoal(contract, store, writerLock, run);
-        this.#active = active;
-        this.#watchWriterLock(active, host);
-        await assertControllerWriterLock(writerLock);
-        this.#armDeadline(active, host);
-        host.appendRunEntry(run);
+        const active = await this.#activateGoal(contract, store, writerLock, run, host);
         host.notify(`${run.runId} resumed with budget epoch ${run.budgetEpoch}`, "info");
         host.sendWork(buildWorkMessage(active.run, active.contract, request.guidance ?? run.latestEvaluation?.feedback ?? undefined), host.isIdle ? "immediate" : "followUp");
         return run;
@@ -470,8 +458,15 @@ export class AttendedGoalController {
     );
   }
 
-  #createActiveGoal(contract: CompletionContract, store: RunStore, writerLock: ControllerWriterLock, run: RunRecord): ActiveGoal {
-    return {
+  async #activateGoal(
+    contract: CompletionContract,
+    store: RunStore,
+    writerLock: ControllerWriterLock,
+    run: RunRecord,
+    host: GoalLoopHost,
+  ): Promise<ActiveGoal> {
+    await assertControllerWriterLock(writerLock);
+    const active: ActiveGoal = {
       generation: ++this.#generation,
       contract,
       store,
@@ -486,6 +481,12 @@ export class AttendedGoalController {
       lockAbortHandler: undefined,
       deadlineTimer: undefined,
     };
+    this.#active = active;
+    this.#watchWriterLock(active, host);
+    await assertControllerWriterLock(writerLock);
+    this.#armDeadline(active, host);
+    host.appendRunEntry(run);
+    return active;
   }
 
   async #discardFailedActivation(writerLock: ControllerWriterLock): Promise<void> {

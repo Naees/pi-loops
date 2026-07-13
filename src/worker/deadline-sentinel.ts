@@ -17,9 +17,10 @@ export interface DeadlineSentinelOptions {
 }
 
 function environmentValue(environment: NodeJS.ProcessEnv, ...names: readonly string[]): string | undefined {
-  const wanted = new Set(names.map((name) => name.toUpperCase()));
-  for (const [name, value] of Object.entries(environment)) {
-    if (value !== undefined && wanted.has(name.toUpperCase())) return value;
+  const entries = Object.entries(environment);
+  for (const wantedName of names) {
+    const match = entries.find(([name, value]) => value !== undefined && name.toUpperCase() === wantedName.toUpperCase());
+    if (match?.[1] !== undefined) return match[1];
   }
   return undefined;
 }
@@ -110,7 +111,12 @@ export function launchWindowsDeadlineSentinel(
   });
   child.once("error", report);
   child.once("exit", (code, signal) => {
-    if (code !== 0 && !stopped) {
+    if (stopped) return;
+    if (!readySettled) {
+      report(new Error(`Deadline sentinel exited before becoming ready: ${JSON.stringify({ code, signal, stderr })}`));
+      return;
+    }
+    if (code !== 0) {
       report(new Error(`Deadline sentinel exited unsuccessfully: ${JSON.stringify({ code, signal, stderr })}`));
     }
   });

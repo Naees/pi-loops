@@ -257,9 +257,12 @@ describe("unattended run controller", () => {
     const { dataRoot, projectRoot, projectId, entries, host, schedule } = await harness();
     const git = worktrees(projectRoot);
     const rpc = workers();
-    rpc.worker.runCycle.mockImplementation((_message: string, signal?: AbortSignal) => new Promise((_resolve, reject) => {
-      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
-    }));
+    rpc.worker.runCycle.mockImplementation((_message: string, signal?: AbortSignal) => {
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    });
     const controller = new UnattendedRunController({
       dataRoot,
       repositoryLockRoot: join(dataRoot, "repository-locks"),
@@ -381,9 +384,12 @@ describe("unattended run controller", () => {
     const { dataRoot, projectRoot, projectId, host, schedule } = await harness();
     const git = worktrees(projectRoot);
     const rpc = workers();
-    rpc.worker.runCycle.mockImplementation((_message: string, signal?: AbortSignal) => new Promise((_resolve, reject) => {
-      signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
-    }));
+    rpc.worker.runCycle.mockImplementation((_message: string, signal?: AbortSignal) => {
+      if (signal?.aborted) return Promise.reject(new DOMException("cancelled", "AbortError"));
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
+      });
+    });
     const controller = new UnattendedRunController({ dataRoot, repositoryLockRoot: join(dataRoot, "repository-locks"), worktrees: git, workers: rpc.manager });
     const abort = new AbortController();
     const running = controller.runSchedule(schedule, "run_1234abcd", evaluator, host, abort.signal);

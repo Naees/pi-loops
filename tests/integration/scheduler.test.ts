@@ -157,6 +157,7 @@ describe("schedule controller", () => {
       expect(stored).toEqual(expect.objectContaining({ state: "pending_coalesced", nextFireAt: "2026-07-12T12:25:00.000Z" }));
     }, { timeout: 10_000 });
     expect(runner).toHaveBeenCalledTimes(1);
+    await expect(controller.delete(schedule.scheduleId, host.cwd)).rejects.toThrow("Stop the active scheduled run");
 
     finishFirst?.({ status: "finished" });
     await vi.waitFor(async () => {

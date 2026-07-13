@@ -350,6 +350,23 @@ describe("attended goal controller", () => {
     await controller.stop(restarted.runId, host);
   });
 
+  it("discards resumed active state when shared activation callbacks fail", async () => {
+    const { controller, host } = await harness();
+    const started = await controller.start({ goal: "resume safely" }, host);
+    await controller.interrupt(host);
+    const appendRunEntry = vi.spyOn(host, "appendRunEntry").mockImplementation(() => {
+      throw new Error("transcript unavailable during resume");
+    });
+
+    await expect(controller.resume({ runId: started.runId }, host)).rejects.toThrow("transcript unavailable during resume");
+    expect(controller.activeRunId).toBeUndefined();
+
+    appendRunEntry.mockRestore();
+    const resumed = await controller.resume({ runId: started.runId }, host);
+    expect(resumed).toEqual(expect.objectContaining({ runId: started.runId, state: "running" }));
+    await controller.stop(resumed.runId, host);
+  });
+
   it("releases the writer lease when terminal host callbacks fail", async () => {
     const { controller, host } = await harness();
     await controller.start({ goal: "finish" }, host);
