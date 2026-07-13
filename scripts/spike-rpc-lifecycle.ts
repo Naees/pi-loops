@@ -77,6 +77,20 @@ function processExists(pid: number): boolean {
   }
 }
 
+async function removeTemporaryRoot(path: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== "win32" || !["EBUSY", "ENOTEMPTY", "EPERM"].includes(code ?? "") || Date.now() >= deadline) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+    }
+  }
+}
+
 async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -280,7 +294,7 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
     };
   } finally {
     await client.stop().catch(() => undefined);
-    await rm(root, { recursive: true, force: true });
+    await removeTemporaryRoot(root);
   }
 }
 
@@ -406,7 +420,7 @@ async function runParentScenario(
     ]);
   } finally {
     if (helper.exitCode === null && helper.signalCode === null) helper.kill("SIGKILL");
-    await rm(root, { recursive: true, force: true });
+    await removeTemporaryRoot(root);
   }
 
   if (forced) process.stdout.write(`forced-parent-death ${iteration}/10 passed\n`);

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { terminateProcessTree } from "./process-tree.js";
 
 export const CHILD_MARKER_ENV = "PI_LOOPS_CHILD";
 export const CHILD_DEADLINE_ENV = "PI_LOOPS_CHILD_DEADLINE_MS";
@@ -20,7 +21,11 @@ export function parseChildDeadline(value: string | undefined, nowMs: number = Da
 export function registerWorkerWatchdog(pi: ExtensionAPI, options: WorkerWatchdogOptions = {}): void {
   const environment = options.environment ?? process.env;
   const now = options.now ?? Date.now;
-  const terminateSelf = options.terminateSelf ?? (() => process.kill(process.pid, "SIGTERM"));
+  const terminateSelf = options.terminateSelf ?? (() => {
+    void terminateProcessTree(process.pid, { force: true }).catch(() => {
+      process.kill(process.pid, "SIGTERM");
+    });
+  });
   const gracefulShutdownMs = options.gracefulShutdownMs ?? 1_000;
   if (!Number.isSafeInteger(gracefulShutdownMs) || gracefulShutdownMs < 0) {
     throw new Error("gracefulShutdownMs must be a non-negative safe integer");
