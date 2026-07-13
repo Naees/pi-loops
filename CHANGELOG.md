@@ -35,6 +35,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The lockfile now supports clean installation with the minimum Node 22.19 toolchain's npm 10 as well as current npm.
 - Terminal attended runs now release their writer lease even if persistence, transcript, or notification callbacks fail.
 - Stored evaluator decisions now enforce the same semantic invariants as fresh evaluator responses.
 - An armed child-watchdog termination escalation is no longer disarmed during session shutdown.

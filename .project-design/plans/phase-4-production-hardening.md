@@ -92,7 +92,8 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Added a non-publishing release-candidate command and strengthened the final release gate to require a clean tree plus authenticated macOS runtime and process-lifecycle checks.
 - Added macOS Node 22.19/current CI, packed package/SBOM artifacts, CodeQL, dependency review, Dependabot, and a manual non-publishing release-candidate workflow.
 - Updated public status, security, changelog, and contributor documentation for Phase 4.
-- Local non-runtime and authenticated macOS runtime release-candidate gates passed, including forced parent death 10/10. Hosted workflow execution remains required before this slice is closed.
+- Local non-runtime and authenticated macOS runtime release-candidate gates passed, including forced parent death 10/10.
+- The first hosted run exposed an npm 10 clean-install lockfile incompatibility (`@emnapi/core`/`@emnapi/runtime` were absent). The lockfile was regenerated with npm 10.9.3 and clean installation now passes under both npm 10 and current npm. Hosted workflow revalidation remains required before this slice is closed.
 
 ## Initial disposition
 
