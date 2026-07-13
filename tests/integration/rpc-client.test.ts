@@ -100,7 +100,10 @@ describe("production RPC worker client", () => {
       { type: "response", id: "pi_loops_1", command: "get_state", success: "yes" },
       { type: "response", id: "pi_loops_1", success: true },
     ]) {
-      const rpc = client(`process.stdin.once("data", () => console.log(${JSON.stringify(JSON.stringify(response))})); setInterval(() => {}, 1000);`);
+      const rpc = client(
+        `process.stdin.once("data", () => console.log(process.env.PI_LOOPS_TEST_RESPONSE)); setInterval(() => {}, 1000);`,
+        { environment: { ...process.env, PI_LOOPS_TEST_RESPONSE: JSON.stringify(response) } },
+      );
       try {
         await expect(rpc.request({ type: "get_state" })).rejects.toThrow("invalid response envelope");
       } finally {

@@ -93,7 +93,8 @@ Turn the implemented feature set into a reviewable release candidate without wid
 - Added macOS Node 22.19/current CI, packed package/SBOM artifacts, CodeQL, dependency review, Dependabot, and a manual non-publishing release-candidate workflow.
 - Updated public status, security, changelog, and contributor documentation for Phase 4.
 - Local non-runtime and authenticated macOS runtime release-candidate gates passed, including forced parent death 10/10.
-- The first hosted run exposed an npm 10 clean-install lockfile incompatibility (`@emnapi/core`/`@emnapi/runtime` were absent). The lockfile was regenerated with npm 10.9.3 and clean installation now passes under both npm 10 and current npm. Hosted workflow revalidation remains required before this slice is closed.
+- The first hosted run exposed an npm 10 clean-install lockfile incompatibility (`@emnapi/core`/`@emnapi/runtime` were absent). The lockfile was regenerated with npm 10.9.3; the hosted Node 22.19, Node 24, package, SBOM, and CodeQL jobs then passed.
+- CodeQL reported one medium test-only code-sanitization finding where a serialized fixture was interpolated into `node -e` source. The fixture now crosses the child boundary as data through a dedicated environment value; focused tests pass and hosted CodeQL revalidation is required to close the alert.
 
 ## Initial disposition
 
