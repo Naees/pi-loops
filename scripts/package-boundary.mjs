@@ -1,4 +1,5 @@
 export const FORBIDDEN_PACKAGE_PREFIXES = Object.freeze([
+  ".github/",
   ".project-design/",
   ".pi-subagents/",
   "tests/",

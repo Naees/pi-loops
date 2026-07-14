@@ -1,5 +1,7 @@
 # Pi Loops
 
+![Pi Loops: bounded goal execution for Pi](https://raw.githubusercontent.com/Naees/pi-loops/release/0.1.0/.github/assets/pi-loops-header.webp)
+
 [![npm version](https://img.shields.io/npm/v/@naees/pi-loops)](https://www.npmjs.com/package/@naees/pi-loops)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 

@@ -21,6 +21,7 @@ describe("package boundary", () => {
       bundleDependencies?: string[];
     };
     expect(manifest.files).toBeDefined();
+    expect(manifest.files).not.toContain(".github/");
     expect(manifest.files).not.toContain(".project-design/");
     expect(manifest.files).not.toContain("tests/");
     expect(manifest.files).toContain("skills/");
@@ -49,6 +50,7 @@ describe("package boundary", () => {
     const files = [
       "README.md",
       ...REQUIRED_PACKAGE_PATHS,
+      ".github/assets/pi-loops-header.webp",
       ".project-design/brief.md",
       { path: "tests/unit/example.test.ts" },
       { path: ".pi-subagents/output.json" },
@@ -57,6 +59,7 @@ describe("package boundary", () => {
     ];
     expect(packageFilePaths(files)).not.toContain(42);
     expect(findForbiddenPackagePaths(files)).toEqual([
+      ".github/assets/pi-loops-header.webp",
       ".project-design/brief.md",
       "tests/unit/example.test.ts",
       ".pi-subagents/output.json",
