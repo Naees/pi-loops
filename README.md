@@ -245,11 +245,6 @@ Pi Loops is designed to fail closed:
 
 See [Operations](docs/operations.md) for recovery, retention, worktrees, upgrades, uninstall behavior, and detailed limits.
 
-## Optional parallel workers
-[pi-subagents](https://github.com/nicobailon/pi-subagents) is optional but recommended for parallel workers and independent review:
-
-Pi Loops works without it and does not import its private implementation files.
-
 ## Documentation
 - [Operations, recovery, data, review branches, upgrades, and troubleshooting](docs/operations.md)
 - [Extension event integration contract](docs/integrations.md)
