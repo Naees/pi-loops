@@ -26,9 +26,18 @@ Pi Loops gives Pi a bounded cycle for:
 
 In short: it helps Pi persist on verifiable tasks without turning into an unbounded background agent.
 
-## What Pi Loops is not
-1. Pi Loops is not a daemon or hosted automation service. It runs only while Pi is running.
-2. It does not approve permissions, store API keys, merge unattended work automatically, or replace Pi's authentication and permission behavior.
+## How Pi Loops compares to normally prompting AIs
+A normal prompt asks an AI to complete a task and allows the working agent to decide when its response is finished. Pi Loops adds a bounded controller around Pi so verifiable work can continue across multiple work, verification, and evaluation cycles.
+
+| Normal AI prompt | Pi Loops |
+| --- | --- |
+| The working agent decides when it is done. | Required evidence and a fresh evaluation determine whether the goal is complete. |
+| Tests and checks are instructions the agent may choose to run. | Declared verifier commands must be observed succeeding before completion. |
+| Further attempts usually require another user prompt. | Failed or missing evidence can start another bounded work cycle automatically. |
+| Progress is followed through the conversation. | Runs have IDs, persisted status, finite budgets, stall detection, stop, and resume controls. |
+| Work normally happens in the current session and checkout. | Attended goals use the current checkout; scheduled and proactive writers use isolated worktrees. |
+
+Pi Loops still uses Pi's normal authentication, permissions, and model access. It does not approve permissions, store API keys, run after Pi exits, or merge unattended work automatically.
 
 ## Install
 Pi Loops requires an existing, working Pi installation with an authenticated model provider and a trusted project.
@@ -64,11 +73,8 @@ Pi Loops works in the current attended session, runs the required checks, evalua
 Scheduled and proactive writers leave successful work on a review branch such as `pi-loops/run-a4f2`. They never merge automatically or modify the active branch during finalization.
 
 ## How completion works
-```text
-Goal → Work → Verify → Evaluate
-          ↑          │
-          └── Retry ─┘
-```
+
+![Pi Loops completion cycle: Goal, Work, Verify, Evaluate, and Retry](https://raw.githubusercontent.com/Naees/pi-loops/release/0.1.0/.github/assets/goal-work-verify-evaluate.webp)
 
 Pi Loops combines:
 
