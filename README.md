@@ -1,279 +1,266 @@
 # Pi Loops
 
-> **Status: version 0.1.0 is release-qualified on macOS, Linux, and Windows with Pi 0.80.6.**
+![Pi Loops: bounded goal execution for Pi](https://raw.githubusercontent.com/Naees/pi-loops/release/0.1.0/.github/assets/pi-loops-header.webp)
 
-Pi Loops is a [Pi](https://pi.dev) package for bounded loop engineering: clarify a goal, work, verify the result, evaluate completion, feed back failures, and retry until the goal succeeds or a declared limit is reached.
+[![npm version](https://img.shields.io/npm/v/@naees/pi-loops)](https://www.npmjs.com/package/@naees/pi-loops)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-The project is designed around one rule:
+Pi Loops keeps [Pi](https://pi.dev) working on a coding goal until the result is verified or a finite limit is reached.
 
-> Pi Loops runs only while Pi is running. It is not a daemon or hosted automation service.
+Pi Loops is founded on these simple principles, it should:
+> 1. work out of the box with no setup required after installation.
+> 2. does not work with cloud implementations, for now.
+> 3. it must have strong stopping conditions to prevent overruns.
 
-## Installation
+It can run goals interactively, on a schedule, or in response to a confirmed filesystem or extension event. Every loop has explicit time and cycle limits, checks its work, and ends with a clear outcome. This will help users to facilitate loop engineering workflows, to find out more about loop engineering here is a [quick start](https://claude.com/blog/getting-started-with-loops) guide.
 
-```text
+> **Compatibility:** version 0.1.0 is qualified on macOS, Linux, and Windows with Pi 0.80.6., although, we are looking for collaborators to verify functionality different operating systems.
+
+## What Pi Loops does
+Pi Loops gives Pi a bounded cycle for:
+1. clarifying a goal and its constraints;
+2. working toward the goal;
+3. collecting deterministic evidence, such as test results;
+4. evaluating whether the goal is complete; and
+5. feeding failures back into another attempt when limits allow.
+
+In short: it helps Pi persist on verifiable tasks without turning into an unbounded background agent.
+
+## How Pi Loops compares to normally prompting AIs
+A normal prompt asks an AI to complete a task and allows the working agent to decide when its response is finished. Pi Loops adds a bounded controller around Pi so verifiable work can continue across multiple work, verification, and evaluation cycles.
+
+| Normal AI prompt | Pi Loops |
+| --- | --- |
+| The working agent decides when it is done. | Required evidence and a fresh evaluation determine whether the goal is complete. |
+| Tests and checks are instructions the agent may choose to run. | Declared verifier commands must be observed succeeding before completion. |
+| Further attempts usually require another user prompt. | Failed or missing evidence can start another bounded work cycle automatically. |
+| Progress is followed through the conversation. | Runs have IDs, persisted status, finite budgets, stall detection, stop, and resume controls. |
+| Work normally happens in the current session and checkout. | Attended goals use the current checkout; scheduled and proactive writers use isolated worktrees. |
+
+Pi Loops still uses Pi's normal authentication, permissions, and model access. It does not approve permissions, store API keys, run after Pi exits, or merge unattended work automatically.
+
+## Install
+Pi Loops requires an existing, working Pi installation with an authenticated model provider and a trusted project.
+
+```sh
 pi install npm:@naees/pi-loops
 ```
 
-Pi Loops requires an existing working Pi installation with:
+No configuration is required for normal use.
 
-- An authenticated model/provider.
-- A trusted project.
-- The permissions needed by the requested coding task.
-- Git for isolated scheduled or proactive code-writing runs.
-- PowerShell 7 on Windows for kill-on-close Job Object lifecycle containment.
+For scheduled or proactive code-writing runs, Git is required. Windows additionally requires PowerShell 7 for process lifecycle containment.
 
-No Pi Loops configuration will be required for normal use.
-
-Operational and integration references:
-
-- [Operations, recovery, data, review branches, upgrades, and troubleshooting](docs/operations.md)
-- [Strict extension event integration contract](docs/integrations.md)
-- [Security policy and private reporting](SECURITY.md)
-
-## Attended goal usage
-
-### Natural language
-
+## Quick start
+Ask naturally:
 ```text
 Keep fixing the authentication implementation until the auth tests pass.
 Do not modify the tests.
 ```
-
-### Explicit goal
-
+Or create an explicit goal:
 ```text
-/loops goal Fix authentication until `npm test -- auth` passes.
-Do not modify existing auth tests.
+/loops goal Fix authentication until `npm test -- auth` passes. Do not modify existing auth tests.
 ```
 
-Goal loops run in the attended Pi session and current checkout. Scheduled and proactive writers run only while Pi is open, in isolated Git worktrees, and leave successful work on review branches without auto-merging.
+Pi Loops works in the current attended session, runs the required checks, evaluates the result, and retries within a finite budget. Use `/loops status` to inspect the run or `/loops stop` to end it.
 
 ## Loop modes
+| Mode | Trigger | Workspace | Best for |
+| --- | --- | --- | --- |
+| Attended goal | A natural-language request or `/loops goal` | Current checkout | Interactive fixes and debugging |
+| Scheduled | A time or recurring interval | Isolated Git worktree | Maintenance and recurring checks |
+| Proactive | A confirmed path or Pi extension event | Isolated Git worktree | Event-driven tasks |
 
-Pi Loops is delivered in phases:
+Scheduled and proactive writers leave successful work on a review branch such as `pi-loops/run-a4f2`. They never merge automatically or modify the active branch during finalization.
 
-1. **Turn-based verification and attended goal loops — implemented:** bounded cycles, deterministic evidence, fresh evaluation, status, stop, interruption, and resume.
-2. **Scheduled loops — implemented:** trigger bounded goals at a time or interval while Pi is running (qualified on macOS, Linux, and Windows with Pi 0.80.6).
-3. **Proactive loops — implemented:** trigger confirmed bounded goals from project filesystem changes, other Pi extensions, or the model-facing tool while Pi is running (qualified on macOS, Linux, and Windows with Pi 0.80.6).
+## How completion works
 
-## Completion model
+![Pi Loops completion cycle: Goal, Work, Verify, Evaluate, and Retry](https://raw.githubusercontent.com/Naees/pi-loops/release/0.1.0/.github/assets/goal-work-verify-evaluate.webp)
 
-A goal loop combines two forms of verification:
+Pi Loops combines:
 
-1. **Deterministic evidence**, such as a test command exiting successfully.
-2. **Fresh model evaluation** for criteria that require judgment.
+- **Deterministic evidence**, such as a verifier command exiting successfully.
+- **Fresh model evaluation** for completion criteria that require judgment.
 
-Required deterministic checks take precedence. A model evaluator cannot declare success while a required check is failing or missing.
+Required deterministic checks take precedence: the evaluator cannot declare success while a required check is failing or missing.
 
-The default attended-goal profile is:
+The default attended-goal budget allows up to three hours of active execution and 15 outer work cycles. A run also stops after three equivalent no-progress cycles. Runs end explicitly as completed, failed, cancelled, interrupted, stalled, or budget exhausted.
 
-- 3 hours of active execution.
-- 15 outer work cycles.
-- Stop after 3 equivalent no-progress cycles.
-- One active writer per repository.
+## Commands
+| Command | Purpose |
+| --- | --- |
+| `/loops goal <goal>` | Start an attended bounded goal |
+| `/loops schedule <time> -- <goal>` | Create a one-off or recurring schedule |
+| `/loops watch <path\|event> -- <goal>` | Create a confirmed proactive trigger |
+| `/loops status` | Show runs, schedules, and triggers |
+| `/loops stop [id]` | Stop a run or pause a schedule or trigger |
+| `/loops resume [id] [guidance]` | Resume eligible work |
+| `/loops clean` | Enforce terminal-record retention limits |
+| `/loops delete <id>` | Confirm and remove one stored record |
 
-Runs end explicitly as completed, failed, cancelled, interrupted, stalled, or budget exhausted. Interrupted and bounded-failure runs can be resumed with a new finite budget.
+The model-facing `pi_loops` tool exposes corresponding `goal`, `schedule`, `trigger`, `status`, `stop`, and `resume` actions.
 
-### Operational limits
+## Examples
 
-- New completion contracts allow a 16 KiB goal, at most 50 constraints, and at most 20 exact verifier commands; each constraint or command is limited to 4 KiB.
-- Evaluator requests have an independent 128 KiB aggregate ceiling and evaluator responses are limited to 64 KiB. Pathological maximal combinations fail closed before provider invocation rather than silently dropping required evidence.
-- Recurring schedules have a five-minute minimum. Missed occurrences are discarded and overlap retains only one pending occurrence.
-- Projects may retain 50 trigger definitions. Filesystem debounce values range from 100 milliseconds to 60 seconds; process-local event ingress admits 64 trigger keys, one pending delivery per definition, and 128 remembered event IDs per trigger.
-- RPC lines are limited to 1 MiB, retained worker events to 8 MiB and 10,000 events, and retained worker stderr to 64 KiB.
-- Budget overrides must be positive safe integers and are not silently clamped. Pi Loops does not claim a provider monetary spending cap.
+### Attended goal
 
-## Implemented command surface
+Use an attended goal for interactive work in the current checkout.
 
-```text
-/loops goal <goal>
-/loops schedule <time-expression> -- <goal>
-/loops watch <project-path|event> -- <goal>
-/loops status
-/loops stop [run-id|schedule-id|trigger-id]
-/loops resume [run-id|trigger-id] [guidance]
-/loops clean
-/loops delete <run-id|schedule-id|trigger-id>
-```
-
-The model-facing `pi_loops` tool exposes `goal`, `schedule`, `trigger`, `status`, `stop`, and `resume` actions, including optional explicit verifier commands, constraints, and finite budget overrides. `trigger` fires an existing user-confirmed trigger definition by ID; it cannot inject a new goal.
-
-`/loops schedule <time-expression> -- <goal>` creates a confirmed project-bound schedule. `/loops watch <path> -- <goal>` creates a debounced filesystem trigger, while `/loops watch event -- <goal>` creates an event-bus trigger. `/loops clean` enforces bounded terminal-record retention; `/loops delete` requires confirmation and removes one stored run, schedule, or trigger record.
-
-Each goal execution receives a run ID such as `run_a4f2`.
-
-If only one run is resumable, `/loops resume` will not require its ID. If several qualify, Pi Loops will present a selector.
-
-## Scheduled-writing isolation
-
-Attended goals may work in the current checkout.
-
-Scheduled and proactive writers use an isolated Git worktree and a namespaced branch such as:
+**Natural language**
 
 ```text
-pi-loops/run-a4f2
+Keep fixing the authentication bug until npm test -- auth passes. Do not modify the tests.
 ```
 
-Successful unattended work is left on that branch for review. Pi Loops never merges it automatically or modifies the user's active branch during finalization.
-
-Unattended writing pauses when:
-
-- The repository is not a Git repository.
-- The working tree is dirty.
-- A safe isolated worktree cannot be created.
-
-Attended goals and read-only schedules can still operate in those cases.
-
-## Proactive trigger contract
-
-Filesystem triggers accept only existing canonical paths contained by the creating project. Changes are debounced, unattributed recursive events and Git metadata are ignored, and trigger storms coalesce to at most one pending occurrence. A project may store at most 50 trigger definitions. `/loops stop <trigger-id>` pauses a definition after cancelling its local active occurrence; `/loops resume <trigger-id>` re-enables it.
-
-Other Pi extensions can fire a previously confirmed event trigger through Pi's shared event bus:
-
-```ts
-pi.events.emit("pi-loops:trigger", {
-  schemaVersion: 1,
-  triggerId: "trigger_a4f2c1d3",
-  eventId: "optional-source-event-id",
-});
-```
-
-The payload is strict and cannot supply a goal, verifier command, budget, path, credential, or vendor-specific data. Event ingress is bounded to one active and one pending delivery per definition; repeated optional `eventId` values are deduplicated for the current Pi process. Event adapters remain outside Pi Loops core.
-
-## Process boundary
-
-For isolated unattended work, Pi Loops starts a narrowly scoped child Pi process in documented RPC mode. The child:
-
-- Use the existing Pi installation and model configuration.
-- Run in the isolated worktree.
-- Receive tasks through JSON stdin rather than shell interpolation.
-- Have finite cycle and time limits.
-- Stop when cancelled or when the parent Pi exits.
-- Be prevented from recursively launching another Pi Loops child.
-
-Native macOS, Linux, and Windows lifecycle gates with Pi 0.80.6 verify cancellation, crash cleanup, resume, descendant cleanup, and repeated forced-parent-death behavior. Windows workers additionally use a PowerShell 7 Job Object sentinel with kill-on-close containment.
-
-## Optional `pi-subagents`
-
-[`pi-subagents`](https://github.com/nicobailon/pi-subagents) is optional but highly recommended for parallel workers and independent review:
+**`/loops` command**
 
 ```text
-pi install npm:pi-subagents
+/loops goal Fix the authentication bug until `npm test -- auth` passes. Do not modify the tests.
 ```
 
-Pi Loops will not bundle, fork, or import private `pi-subagents` implementation files. The core package must work without it.
+### Scheduled loop
 
-## Permissions and scope
+Use a scheduled loop for work that should recur while Pi remains open.
 
-Pi Loops relies on Pi's existing permission behavior. It does not add a second permission framework or become a general policy package.
-
-Pi Loops is responsible for:
-
-- Loop state and transitions.
-- Scheduling and trigger coalescing.
-- Bounded retries and no-progress detection.
-- Verification evidence and completion evaluation.
-- Cancellation, interruption, and resume.
-- Writer isolation needed by unattended loops.
-
-Provider authentication, deployment authorization, secret management, and vendor integrations remain the responsibility of Pi or other installed packages.
-
-## Storage and cleanup
-
-Attended goal state is stored in user-local Pi Loops storage, not added to the target repository.
-
-Current retention behavior:
-
-- Keep at most 50 eligible terminal runs per project.
-- Remove the least recently used run when that limit is exceeded.
-- Remove its Pi Loops runtime record, ID index, evidence, logs, and managed child-session data completely.
-- Never automatically remove active, interrupted, queued, or unresolved-worktree runs.
-- Never treat a project code branch as disposable runtime storage.
-
-Pi session history is append-only. `/loops delete` cannot erase the user's command, agent messages, or concise state entries already written to the parent Pi transcript. New state entries intentionally omit goal text and evidence. Project files and Git history are also outside runtime-record deletion.
-
-## Upgrade and uninstall behavior
-
-Persisted run, schedule, trigger, notice, and configuration records currently use schema version 1. Release candidates must continue reading frozen version-one fixtures without rewriting them. Future migrations must be explicit, sequential, validated, atomic, and performed only while the relevant mutation lease is held. Unknown newer record versions fail closed and are never downgraded or discarded.
-
-Upgrading or reinstalling the npm package preserves user-local Pi Loops runtime state. Uninstalling removes package files but intentionally leaves user runtime state untouched; Pi Loops has no uninstall lifecycle script that could delete user data. Use confirmed `/loops delete` operations or the documented Pi Loops data boundary before uninstalling if that state should be removed. Git branches, project files, and parent Pi transcripts remain outside package-uninstall cleanup.
-
-## Configuration
-
-Configuration will be optional. Planned precedence is:
+**Natural language**
 
 ```text
-Invocation overrides
-→ project configuration
-→ user configuration
-→ built-in defaults
+Use Pi Loops every 6 hours to run the test suite and fix regressions without changing tests.
 ```
 
-No project configuration file will be created automatically.
+**`/loops` command**
 
-## Development roadmap
+```text
+/loops schedule every 6 hours -- Run the test suite and fix regressions without changing tests.
+```
 
-### Phase 0 — Foundation and technical spikes
+Pi displays the schedule and its next occurrence for confirmation before saving it.
 
-- Package and test harness.
-- RPC worker lifecycle.
-- Storage and writer leases.
-- Evaluator integration.
-- Packed-package clean-install testing.
+### Proactive loop
 
-### Phase 1 — Goal loops (implemented)
+Use a proactive loop to respond to changes in a confirmed project path.
 
-- Natural-language and `/loops goal` entry points.
-- Status, stop, interruption recovery, and resume.
-- Completion contracts and bounded evidence.
-- Fresh evaluation, budgets, stall detection, persistence, leases, and retention.
+**Natural language**
 
-### Phase 2 — Scheduling (implemented)
+```text
+Use Pi Loops to watch src/auth. When it changes, run the authentication tests and fix regressions without changing tests.
+```
 
-- One-off and recurring schedules.
-- Coalescing and project binding.
-- Worktree-isolated child execution.
-- Review branches and restart recovery.
+**`/loops` command**
 
-### Phase 3 — Proactive triggers (implemented)
+```text
+/loops watch src/auth -- Run the authentication tests after changes and fix regressions without changing tests.
+```
 
-- Confirmed, project-contained filesystem triggers.
-- Namespaced Pi event-bus integration.
-- Model-facing firing of confirmed trigger definitions.
-- Debounce, coalescing, restart, and trigger-storm protection.
+Pi asks for confirmation before saving the trigger. The watched path must already exist inside the current project.
 
-### Phase 4 — Production hardening (complete)
+## Change limits for one run
 
-- State migrations and compatibility hardening.
-- Comprehensive security audit.
-- Supply-chain and package-content review.
-- Release automation and clean-install release candidates.
+Pi Loops supports two per-run budget overrides:
 
-### Phase 5 — Linux and Windows qualification (complete)
+- `maxCycles`
+- `maxActiveMinutes`
 
-- Native Ubuntu 24.04 and Windows Server 2025 matrices cover the minimum and current supported Node lines.
-- Packed runtime, process-tree cleanup, Git isolation, locking, recovery, migration, and uninstall checks run on both platforms.
-- Real Pi 0.80.6 RPC lifecycle and proactive writer gates exercise native child cleanup and review branches.
-- Forced-parent-death cleanup is repeated 10 times per native lifecycle run.
+These overrides are available through the model-facing `pi_loops` tool. They are not `/loops` command flags.
 
-Physical devices are not required; native CI runners provide the operating-system evidence. Release candidates additionally pass clean-install, package-content, security, compatibility, and authenticated macOS runtime gates.
+### Attended goal
 
-Changes are reviewed and refactored incrementally rather than postponing cleanup.
+Paste the following into Pi and replace the goal placeholder:
 
-## Security
+```text
+Call the pi_loops tool now with:
 
-Pi packages execute with the user's system permissions. Review package source before installation.
+action: goal
+goal: <describe the goal>
+maxCycles: 30
+maxActiveMinutes: 240
 
-The implemented foundation includes strict JSONL RPC parsing, bounded evaluator and state payloads, atomic state writes, ownership-token leases, and child recursion/deadline guards. Phase 4 adds automated production-dependency auditing, SPDX license review, CycloneDX SBOM validation, high-confidence tracked-secret scanning, static analysis, and non-publishing release-candidate artifacts. Scheduled and proactive child launch is enabled on the natively qualified macOS, Linux, and Windows/Pi 0.80.6 combinations; unknown platforms remain fail-closed.
+Use these exact limits for this run.
+```
 
-Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. Automated security controls supplement manual review of the process, filesystem, Git, event, evaluator, and deletion boundaries.
+For example:
 
-Report security issues through the private process documented in [`SECURITY.md`](SECURITY.md).
+```text
+Call the pi_loops tool now with:
+
+action: goal
+goal: Fix authentication until npm test -- auth passes. Do not modify the tests.
+maxCycles: 30
+maxActiveMinutes: 240
+
+Use these exact limits for this run.
+```
+
+### Scheduled goal
+
+Custom limits on a schedule apply to every occurrence:
+
+```text
+Call the pi_loops tool now with:
+
+action: schedule
+scheduleExpression: every 30 minutes
+goal: <describe the goal>
+maxCycles: 20
+maxActiveMinutes: 180
+
+Use these exact limits for every occurrence of this schedule.
+```
+
+Pi will display a confirmation screen. Check the cycle and active-minute limits before approving the schedule.
+
+### Resume an attended goal with new limits
+
+An attended run can be resumed with a new finite budget epoch:
+
+```text
+Call the pi_loops tool now with:
+
+action: resume
+runId: <run_id>
+maxCycles: 25
+maxActiveMinutes: 300
+
+Resume this attended run with a new finite budget epoch using these limits.
+```
+
+### Limitations
+
+- Values must be positive whole numbers.
+- Overrides apply only to the new run, schedule, or attended resume.
+- Overrides do not change package-wide defaults.
+- `/loops goal --max-cycles ...` is not supported; Pi Loops would treat the flags as goal text.
+- Trigger definitions and unattended resumes cannot currently receive custom limits through the public interface.
+- `stallThreshold` is not currently exposed through `pi_loops`.
+- Do not edit installed package files directly; upgrades may overwrite those changes.
+
+## Safety and isolation
+Pi Loops is designed to fail closed:
+
+- Every run has finite cycle and time limits.
+- Only one writer may operate in a repository at a time.
+- Unattended writers require a clean Git repository and an isolated worktree.
+- Cancelling Pi or closing the parent process also stops managed child work.
+- Unknown platforms and unqualified Pi versions cannot run unattended writers.
+- Confirmed event triggers cannot supply new goals, credentials, paths, or budget overrides.
+
+See [Operations](docs/operations.md) for recovery, retention, worktrees, upgrades, uninstall behavior, and detailed limits.
+
+## Documentation
+- [Operations, recovery, data, review branches, upgrades, and troubleshooting](docs/operations.md)
+- [Extension event integration contract](docs/integrations.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [Security policy and private reporting](SECURITY.md)
 
 ## Project status
+Version 0.1.0 includes attended goals, scheduling, proactive triggers, production hardening, and native macOS, Linux, and Windows qualification for Pi 0.80.6.
 
-Version 0.1.0 includes attended goals, scheduling, proactive triggers, production hardening, and native macOS, Linux, and Windows qualification for Pi 0.80.6. Unknown platforms and unqualified Pi versions remain fail-closed for unattended execution.
+Unknown platforms and unqualified Pi versions remain fail-closed for unattended execution.
+
+## Security
+Pi packages execute with the user's system permissions. Review package source before installation.
+
+Pi Loops does not store API keys or environment snapshots, approve permissions automatically, or merge review branches. Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).
 
 ## License
-
 Pi Loops is licensed under the [MIT License](LICENSE).

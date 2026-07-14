@@ -7,7 +7,7 @@ Pi Loops runs only while the parent Pi process is open. It does not install a da
 - Supported release line: 0.1.x.
 - Node.js: 22.19.0 or newer.
 - Pi: unattended scheduled and proactive writers are qualified with Pi 0.80.6 on macOS, Linux, and Windows.
-- Native qualification currently uses Ubuntu 24.04 and Windows Server 2025 with Node 22.19.0 and Node 24.
+- Native qualification uses Ubuntu 24.04 and Windows Server 2025 with Node 22.19.0 and Node 24.
 - Git is required for unattended writing. Attended goals use the current checkout.
 - Windows requires PowerShell 7 for Job Object lifecycle containment.
 - Unknown operating systems remain fail-closed.
@@ -87,7 +87,7 @@ Automatic retention never removes active, interrupted, recoverable, queued, or u
 
 ## Upgrade, uninstall, and reinstall
 
-Version-one state is the frozen 0.1.x compatibility baseline. Release candidates read it without rewriting. Future migrations must be reviewed, sequential, validated, atomic, and performed under the relevant mutation lease. Unknown newer versions are not downgraded.
+Version-one state is the frozen 0.1.x compatibility baseline. Pi Loops reads it without rewriting. Future migrations must be reviewed, sequential, validated, atomic, and performed under the relevant mutation lease. Unknown newer versions are not downgraded.
 
 An npm upgrade or reinstall preserves user runtime state. `npm uninstall` removes package files but intentionally leaves user runtime state in place; the package has no destructive uninstall lifecycle script. If state should be removed, use confirmed Pi Loops cleanup before uninstalling or manually remove only the documented Pi Loops data root after Pi has stopped and review branches have been handled.
 

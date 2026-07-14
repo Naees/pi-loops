@@ -1,4 +1,5 @@
 export const FORBIDDEN_PACKAGE_PREFIXES = Object.freeze([
+  ".github/",
   ".project-design/",
   ".pi-subagents/",
   "tests/",
@@ -27,4 +28,13 @@ export function findForbiddenPackagePaths(files) {
 export function findMissingPackagePaths(files) {
   const paths = new Set(packageFilePaths(files));
   return REQUIRED_PACKAGE_PATHS.filter((path) => !paths.has(path));
+}
+
+export function packagePublishReport(value, packageName) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (value.name === packageName) return value;
+  const keyed = value[packageName];
+  return keyed && typeof keyed === "object" && !Array.isArray(keyed) && keyed.name === packageName
+    ? keyed
+    : undefined;
 }

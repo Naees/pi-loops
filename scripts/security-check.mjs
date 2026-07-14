@@ -65,7 +65,13 @@ const filesResult = run("git", ["ls-files", "--cached", "--others", "--exclude-s
 if (filesResult.status !== 0) throw new Error(`git ls-files failed\n${filesResult.stderr}`);
 const entries = [];
 for (const path of filesResult.stdout.split("\0").filter(Boolean)) {
-  const metadata = await lstat(path);
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") continue;
+    throw error;
+  }
   if (metadata.isSymbolicLink()) {
     entries.push({ path, text: await readlink(path) });
     continue;

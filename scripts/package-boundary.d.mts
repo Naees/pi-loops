@@ -6,3 +6,4 @@ export type PackageFile = string | { path?: unknown } | null | undefined;
 export function packageFilePaths(files: readonly PackageFile[]): string[];
 export function findForbiddenPackagePaths(files: readonly PackageFile[]): string[];
 export function findMissingPackagePaths(files: readonly PackageFile[]): string[];
+export function packagePublishReport(value: unknown, packageName: string): Record<string, unknown> | undefined;

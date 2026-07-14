@@ -16,8 +16,8 @@ Include reproduction steps, affected platforms, expected impact, and any suggest
 
 ## Automated checks
 
-Phase 4 security automation validates production dependency advisories, reviewed SPDX licenses, a CycloneDX production-dependency SBOM, high-confidence tracked-secret patterns, immutable GitHub Action references, package contents, and static analysis. These automated checks supplement rather than replace manual review of process, filesystem, Git, event, evaluator, and deletion boundaries.
+Release automation validates production dependency advisories, reviewed SPDX licenses, a CycloneDX production-dependency SBOM, high-confidence tracked-secret patterns, immutable GitHub Action references, package contents, and static analysis. These checks supplement rather than replace manual review of process, filesystem, Git, event, evaluator, and deletion boundaries.
 
 ## Release requirements
 
-A public release is blocked by unresolved critical or high-severity findings, an unproven child-process cleanup guarantee, unintended files in the npm tarball, an unclean release tree, or failure of the authenticated macOS, Linux, or Windows runtime gates.
+A public release is blocked by unresolved critical or high-severity findings, an unproven child-process cleanup guarantee, unintended files in the npm tarball, an unclean release tree, failure of the authenticated macOS runtime gate, or failure of native Linux or Windows qualification.

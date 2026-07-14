@@ -4,6 +4,7 @@ import {
   findForbiddenPackagePaths,
   findMissingPackagePaths,
   packageFilePaths,
+  packagePublishReport,
   REQUIRED_PACKAGE_PATHS,
 } from "../../scripts/package-boundary.mjs";
 
@@ -21,6 +22,7 @@ describe("package boundary", () => {
       bundleDependencies?: string[];
     };
     expect(manifest.files).toBeDefined();
+    expect(manifest.files).not.toContain(".github/");
     expect(manifest.files).not.toContain(".project-design/");
     expect(manifest.files).not.toContain("tests/");
     expect(manifest.files).toContain("skills/");
@@ -45,10 +47,19 @@ describe("package boundary", () => {
     expect(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []).not.toContain("pi-subagents");
   });
 
+  it("accepts current and keyed npm publish report formats", () => {
+    const report = { name: "@naees/pi-loops", version: "0.1.0" };
+    expect(packagePublishReport(report, report.name)).toBe(report);
+    expect(packagePublishReport({ [report.name]: report }, report.name)).toBe(report);
+    expect(packagePublishReport({ other: report }, report.name)).toBeUndefined();
+    expect(packagePublishReport([], report.name)).toBeUndefined();
+  });
+
   it("normalizes package inventories and reports forbidden or missing paths", () => {
     const files = [
       "README.md",
       ...REQUIRED_PACKAGE_PATHS,
+      ".github/assets/pi-loops-header.webp",
       ".project-design/brief.md",
       { path: "tests/unit/example.test.ts" },
       { path: ".pi-subagents/output.json" },
@@ -57,6 +68,7 @@ describe("package boundary", () => {
     ];
     expect(packageFilePaths(files)).not.toContain(42);
     expect(findForbiddenPackagePaths(files)).toEqual([
+      ".github/assets/pi-loops-header.webp",
       ".project-design/brief.md",
       "tests/unit/example.test.ts",
       ".pi-subagents/output.json",
