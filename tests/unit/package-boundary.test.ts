@@ -4,6 +4,7 @@ import {
   findForbiddenPackagePaths,
   findMissingPackagePaths,
   packageFilePaths,
+  packagePublishReport,
   REQUIRED_PACKAGE_PATHS,
 } from "../../scripts/package-boundary.mjs";
 
@@ -44,6 +45,14 @@ describe("package boundary", () => {
       expect(dependencies ?? {}).not.toHaveProperty("pi-subagents");
     }
     expect(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []).not.toContain("pi-subagents");
+  });
+
+  it("accepts current and keyed npm publish report formats", () => {
+    const report = { name: "@naees/pi-loops", version: "0.1.0" };
+    expect(packagePublishReport(report, report.name)).toBe(report);
+    expect(packagePublishReport({ [report.name]: report }, report.name)).toBe(report);
+    expect(packagePublishReport({ other: report }, report.name)).toBeUndefined();
+    expect(packagePublishReport([], report.name)).toBeUndefined();
   });
 
   it("normalizes package inventories and reports forbidden or missing paths", () => {

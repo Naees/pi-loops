@@ -310,7 +310,7 @@ describe("Pi extension registration", () => {
     await command.handler("help", ctx);
     expect(notifications.at(-1)?.message).toContain("/loops schedule <time-expression> -- <goal>");
     await command.handler("future files", ctx);
-    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "warning", message: expect.stringContaining("planned for a later phase: future") }));
+    expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "warning", message: "Unknown Pi Loops subcommand: future" }));
     await command.handler("goal", ctx);
     expect(notifications.at(-1)).toEqual(expect.objectContaining({ level: "error", message: "Usage: /loops goal <goal>" }));
 

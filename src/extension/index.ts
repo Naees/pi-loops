@@ -255,7 +255,7 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             ctx.ui.notify(commandHelp(), "info");
             break;
           case "unsupported":
-            ctx.ui.notify(`Pi Loops subcommand is planned for a later phase: ${parsed.value}`, "warning");
+            ctx.ui.notify(`Unknown Pi Loops subcommand: ${parsed.value}`, "warning");
             break;
         }
       } catch (error) {

@@ -1,0 +1,161 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<package-version> tag to publish
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  candidate:
+    name: Rebuild tagged release candidate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Require a protected publication environment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          const response = await fetch(
+            `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/environments/npm`,
+            {
+              headers: {
+                Accept: "application/vnd.github+json",
+                Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            },
+          );
+          if (!response.ok) throw new Error(`Protected npm environment is unavailable: HTTP ${response.status}`);
+          const environment = await response.json();
+          const hasReviewers = environment.protection_rules?.some((rule) => rule.type === "required_reviewers");
+          const branchPolicy = environment.deployment_branch_policy;
+          if (!hasReviewers || !(branchPolicy?.protected_branches || branchPolicy?.custom_branch_policies)) {
+            throw new Error("The npm environment must require reviewers and restrict deployment branches");
+          }
+          NODE
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          cache: npm
+      - name: Verify release tag
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync, spawnSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+
+          const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+          const tag = process.env.RELEASE_TAG;
+          if (tag !== `v${manifest.version}`) {
+            throw new Error(`Release tag ${tag} does not match package version ${manifest.version}`);
+          }
+          const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+          const tagged = execFileSync("git", ["rev-parse", "--verify", `refs/tags/${tag}^{commit}`], {
+            encoding: "utf8",
+          }).trim();
+          if (head !== tagged) throw new Error(`Release tag ${tag} does not point to the checked-out commit`);
+          const ancestry = spawnSync("git", ["merge-base", "--is-ancestor", head, "origin/main"]);
+          if (ancestry.status !== 0) throw new Error(`Release tag ${tag} is not merged into origin/main`);
+          NODE
+      - run: npm ci
+      - run: npm run release:candidate
+      - name: Require an unchanged checkout
+        run: test -z "$(git status --porcelain --untracked-files=all)"
+      - name: Build publication artifact
+        run: |
+          mkdir artifacts
+          npm pack --json --pack-destination artifacts > artifacts/npm-pack.json
+          cd artifacts
+          sha256sum *.tgz > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: npm-release-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish reviewed npm artifact
+    needs: candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: npm-release-${{ github.run_id }}
+          path: release
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Validate publication artifact
+        run: |
+          cd release
+          sha256sum --check SHA256SUMS
+          mapfile -t tarballs < <(find . -maxdepth 1 -type f -name '*.tgz' -print)
+          test "${#tarballs[@]}" -eq 1
+          TARBALL="${tarballs[0]}" node --input-type=module <<'NODE'
+          import { execFileSync } from "node:child_process";
+
+          const tarball = process.env.TARBALL;
+          const manifest = JSON.parse(execFileSync("tar", ["-xOzf", tarball, "package/package.json"], {
+            encoding: "utf8",
+          }));
+          if (process.env.RELEASE_TAG !== `v${manifest.version}` || manifest.name !== "@naees/pi-loops") {
+            throw new Error("Publication artifact identity does not match the requested release");
+          }
+          if (manifest.publishConfig?.access !== "public" || manifest.publishConfig?.provenance !== true) {
+            throw new Error("Publication artifact does not require public provenance publishing");
+          }
+          const lifecycleScripts = [
+            "preinstall", "install", "postinstall", "prepack", "prepare", "postpack",
+            "prepublish", "prepublishOnly", "publish", "postpublish",
+          ];
+          const presentLifecycleScripts = lifecycleScripts.filter((name) => manifest.scripts?.[name]);
+          if (presentLifecycleScripts.length > 0) {
+            throw new Error(`Publication artifact contains lifecycle scripts: ${presentLifecycleScripts.join(", ")}`);
+          }
+          const paths = execFileSync("tar", ["-tzf", tarball], { encoding: "utf8" }).trim().split("\n");
+          const required = [
+            "package/package.json", "package/README.md", "package/LICENSE",
+            "package/src/extension/index.ts", "package/src/worker/windows-job-sentinel.ps1",
+            "package/skills/pi-loops/SKILL.md", "package/docs/operations.md",
+          ];
+          const forbidden = [
+            "package/tests/", "package/scripts/", "package/.github/", "package/.project-design/",
+            "package/.pi-subagents/", "package/coverage/", "package/node_modules/",
+          ];
+          if (required.some((path) => !paths.includes(path))) throw new Error("Publication artifact is missing a runtime file");
+          if (paths.some((path) => path.startsWith("/") || path.split("/").includes("..") ||
+            forbidden.some((prefix) => path.startsWith(prefix)))) {
+            throw new Error("Publication artifact contains a forbidden path");
+          }
+          NODE
+          NPM_VERSION="$(npm --version)" node -e 'const [major, minor] = process.env.NPM_VERSION.split(".").map(Number); if (major < 11 || (major === 11 && minor < 5)) throw new Error("npm 11.5.1 or newer is required for trusted publishing")'
+      - name: Publish with provenance
+        run: npm publish release/*.tgz --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

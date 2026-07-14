@@ -1,6 +1,8 @@
 node_modules/
 coverage/
+artifacts/
 *.tgz
+*.tsbuildinfo
 .pi-subagents/
 .DS_Store
 *.log

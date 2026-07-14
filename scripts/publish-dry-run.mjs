@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { findForbiddenPackagePaths, findMissingPackagePaths } from "./package-boundary.mjs";
+import { findForbiddenPackagePaths, findMissingPackagePaths, packagePublishReport } from "./package-boundary.mjs";
 import { npmInvocation } from "./platform-command.mjs";
 
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
@@ -23,13 +23,14 @@ if (result.error) throw result.error;
 if (result.status !== 0) {
   throw new Error(`npm publish --dry-run failed\n${result.stderr || result.stdout}`);
 }
-let report;
+let output;
 try {
-  report = JSON.parse(result.stdout);
+  output = JSON.parse(result.stdout);
 } catch (error) {
   throw new Error("npm publish --dry-run returned invalid JSON", { cause: error });
 }
-if (report.name !== manifest.name || report.version !== manifest.version || report.id !== `${manifest.name}@${manifest.version}` ||
+const report = packagePublishReport(output, manifest.name);
+if (!report || report.version !== manifest.version || report.id !== `${manifest.name}@${manifest.version}` ||
   !Array.isArray(report.files) || !Array.isArray(report.bundled)) {
   throw new Error("npm publish --dry-run returned an invalid package report");
 }
