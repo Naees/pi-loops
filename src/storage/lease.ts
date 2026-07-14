@@ -21,6 +21,7 @@ export interface WriterLease {
 
 interface LeaseHandle {
   active: boolean;
+  guardCompromised: boolean;
   compromised?: Error;
   readonly compromise: AbortController;
   releaseLock: () => Promise<void>;
@@ -77,7 +78,12 @@ export async function acquireWriterLease(
   }
 
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const handle: LeaseHandle = { active: true, compromise: new AbortController(), releaseLock: async () => undefined };
+  const handle: LeaseHandle = {
+    active: true,
+    guardCompromised: false,
+    compromise: new AbortController(),
+    releaseLock: async () => undefined,
+  };
   let releaseLock: (() => Promise<void>) | undefined;
   try {
     releaseLock = await lock(path, {
@@ -87,6 +93,7 @@ export async function acquireWriterLease(
       retries: 0,
       onCompromised(error) {
         handle.active = false;
+        handle.guardCompromised = true;
         handle.compromised = error;
         handle.compromise.abort(error);
       },
@@ -143,8 +150,29 @@ export async function assertWriterLease(lease: WriterLease): Promise<void> {
 
 export async function releaseWriterLease(lease: WriterLease): Promise<void> {
   const handle = handles.get(lease);
-  await assertWriterLease(lease);
   if (!handle) throw new LeaseOwnershipError("Writer lease handle is missing");
+
+  try {
+    await assertWriterLease(lease);
+  } catch (ownershipError) {
+    if (handle.guardCompromised) {
+      handles.delete(lease);
+      throw ownershipError;
+    }
+
+    try {
+      await handle.releaseLock();
+      handles.delete(lease);
+    } catch (releaseError) {
+      throw new AggregateError(
+        [ownershipError, releaseError],
+        "Writer lease ownership was lost and its local lock handle could not be released",
+      );
+    } finally {
+      handle.active = false;
+    }
+    throw ownershipError;
+  }
 
   await rm(lease.path, { force: true });
   await handle.releaseLock();

@@ -84,7 +84,7 @@ describe("writer leases", () => {
     await releaseWriterLease(lease);
   });
 
-  it("fails closed and signals compromise when lease metadata ownership changes", async () => {
+  it("fails closed, signals compromise, and releases its lock handle when lease metadata ownership changes", async () => {
     const path = await leasePath();
     const lease = await acquireWriterLease(path, 5_000);
     await writeFile(path, JSON.stringify({ ...lease.record, token: "replacement-owner" }));
@@ -93,6 +93,9 @@ describe("writer leases", () => {
     expect(lease.signal.aborted).toBe(true);
     expect(lease.signal.reason).toBeInstanceOf(LeaseOwnershipError);
     await expect(releaseWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
+
+    const replacement = await acquireWriterLease(path, 5_000);
+    await releaseWriterLease(replacement);
   });
 
   it("combines, asserts, and releases multiple leases", async () => {
@@ -139,6 +142,11 @@ describe("writer leases", () => {
       }, { once: true });
     })).resolves.toBeInstanceOf(Error);
     await expect(assertWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
+
+    const replacement = await acquireWriterLease(path, 2_000);
+    await expect(releaseWriterLease(lease)).rejects.toBeInstanceOf(LeaseOwnershipError);
+    await expect(assertWriterLease(replacement)).resolves.toBeUndefined();
+    await releaseWriterLease(replacement);
   });
 
   it("recovers a stale proper-lockfile lock", async () => {
