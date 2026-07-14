@@ -55,6 +55,12 @@ describe("package boundary", () => {
     expect(packagePublishReport([], report.name)).toBeUndefined();
   });
 
+  it("publishes the reviewed artifact through an explicit local tarball path", async () => {
+    const workflow = await readFile(".github/workflows/publish.yml", "utf8");
+    expect(workflow).toContain("run: npm publish ./release/*.tgz --access public");
+    expect(workflow).not.toContain("run: npm publish release/*.tgz --access public");
+  });
+
   it("normalizes package inventories and reports forbidden or missing paths", () => {
     const files = [
       "README.md",
