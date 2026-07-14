@@ -93,57 +93,57 @@ The model-facing `pi_loops` tool exposes corresponding `goal`, `schedule`, `trig
 
 ## Examples
 
-### One example for each loop type
+### Attended goal
 
-**Attended goal** — work interactively until a check passes:
+Use an attended goal for interactive work in the current checkout.
+
+**Natural language**
+
+```text
+Keep fixing the authentication bug until npm test -- auth passes. Do not modify the tests.
+```
+
+**`/loops` command**
 
 ```text
 /loops goal Fix the authentication bug until `npm test -- auth` passes. Do not modify the tests.
 ```
 
-**Scheduled loop** — repeat maintenance while Pi remains open:
+### Scheduled loop
+
+Use a scheduled loop for work that should recur while Pi remains open.
+
+**Natural language**
+
+```text
+Use Pi Loops every 6 hours to run the test suite and fix regressions without changing tests.
+```
+
+**`/loops` command**
 
 ```text
 /loops schedule every 6 hours -- Run the test suite and fix regressions without changing tests.
 ```
 
-**Proactive loop** — respond to changes in a confirmed project path:
+Pi displays the schedule and its next occurrence for confirmation before saving it.
+
+### Proactive loop
+
+Use a proactive loop to respond to changes in a confirmed project path.
+
+**Natural language**
 
 ```text
-/loops watch src/auth -- Run the authentication tests after changes and fix any regressions without changing tests.
+Use Pi Loops to watch src/auth. When it changes, run the authentication tests and fix regressions without changing tests.
 ```
 
-Pi asks for confirmation before creating a schedule or proactive trigger. The watched path must already exist inside the current project.
-
-### Two brief workflows
-
-**1. Fix and monitor a failing test**
-
-Start the loop:
+**`/loops` command**
 
 ```text
-/loops goal Fix checkout until `npm test -- checkout` passes. Do not modify the tests.
+/loops watch src/auth -- Run the authentication tests after changes and fix regressions without changing tests.
 ```
 
-Then inspect it:
-
-```text
-/loops status
-```
-
-**2. Resume interrupted work with guidance**
-
-Find the run ID:
-
-```text
-/loops status
-```
-
-Then resume it:
-
-```text
-/loops resume run_a4f2c1d3 Focus on the token refresh failure first.
-```
+Pi asks for confirmation before saving the trigger. The watched path must already exist inside the current project.
 
 ## Change limits for one run
 
