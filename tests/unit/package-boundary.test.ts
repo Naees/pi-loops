@@ -59,7 +59,10 @@ describe("package boundary", () => {
   it("publishes the reviewed artifact through an explicit local tarball path", async () => {
     const workflow = await readFile(".github/workflows/publish.yml", "utf8");
     expect(workflow).toContain("run: npm publish ./release/*.tgz --access public");
+    expect(workflow).toContain("id-token: write");
     expect(workflow).not.toContain("run: npm publish release/*.tgz --access public");
+    expect(workflow).not.toContain("NODE_AUTH_TOKEN");
+    expect(workflow).not.toContain("NPM_TOKEN");
   });
 
   it("normalizes package inventories and reports forbidden or missing paths", () => {

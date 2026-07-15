@@ -157,5 +157,3 @@ jobs:
           NPM_VERSION="$(npm --version)" node -e 'const [major, minor] = process.env.NPM_VERSION.split(".").map(Number); if (major < 11 || (major === 11 && minor < 5)) throw new Error("npm 11.5.1 or newer is required for trusted publishing")'
       - name: Publish with provenance
         run: npm publish ./release/*.tgz --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
