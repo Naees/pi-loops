@@ -123,8 +123,9 @@ export class UnattendedRunController {
     host: UnattendedRunHost,
     signal: AbortSignal,
     kind: ScheduleOccurrenceKind = "start",
+    guidance?: string,
   ): Promise<ScheduleOccurrenceResult> {
-    return this.#runUnattended(scheduleDefinition(schedule), runId, evaluator, host, signal, kind);
+    return this.#runUnattended(scheduleDefinition(schedule), runId, evaluator, host, signal, kind, guidance);
   }
 
   runTrigger(
@@ -134,8 +135,9 @@ export class UnattendedRunController {
     host: UnattendedRunHost,
     signal: AbortSignal,
     kind: UnattendedOccurrenceKind = "start",
+    guidance?: string,
   ): Promise<ScheduleOccurrenceResult> {
-    return this.#runUnattended(triggerDefinition(trigger), runId, evaluator, host, signal, kind);
+    return this.#runUnattended(triggerDefinition(trigger), runId, evaluator, host, signal, kind, guidance);
   }
 
   async #runUnattended(
@@ -145,6 +147,7 @@ export class UnattendedRunController {
     host: UnattendedRunHost,
     signal: AbortSignal,
     kind: UnattendedOccurrenceKind,
+    guidance?: string,
   ): Promise<ScheduleOccurrenceResult> {
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
     const binding = await resolveProjectBinding(host.cwd);
@@ -276,7 +279,7 @@ export class UnattendedRunController {
       let progress: ProgressTracker = run.progressSignature
         ? { signature: run.progressSignature, equivalentFailures: run.equivalentFailures ?? 0 }
         : EMPTY_PROGRESS_TRACKER;
-      let feedback: string | undefined;
+      let feedback: string | undefined = guidance ?? (resuming ? run.latestEvaluation?.feedback ?? undefined : undefined);
 
       while (!executionSignal.aborted) {
         const collector = new CycleEvidenceCollector();

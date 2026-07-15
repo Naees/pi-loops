@@ -135,6 +135,29 @@ describe("schedule controller", () => {
     await controller.shutdown();
   });
 
+  it("persists pause and enable operations for an idle recurring schedule", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
+    const { controller, host } = await harness();
+    const runner = vi.fn(async () => ({ status: "finished" as const }));
+    await controller.start(host, runner);
+    const schedule = await controller.create({ expression: "every 5m", goal: "run checks" }, host);
+
+    await expect(controller.stop(schedule.scheduleId, host.cwd)).resolves.toBe(schedule.scheduleId);
+    expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "paused", pauseReason: "user" }));
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(runner).not.toHaveBeenCalled();
+
+    await controller.enable(schedule.scheduleId, host.cwd);
+    expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({
+      state: "enabled",
+      nextFireAt: "2026-07-12T12:15:00.000Z",
+    }));
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce());
+    await controller.shutdown();
+  });
+
   it("coalesces recurring overlap into exactly one replacement", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-12T12:00:00.000Z"));
@@ -426,8 +449,10 @@ describe("schedule controller", () => {
     const projectRoot = await realpath(project);
     const projectId = createProjectId(projectRoot);
     const kinds: string[] = [];
-    const runner = vi.fn(async (schedule: ScheduleRecord, runId: string, _signal: AbortSignal, kind: "start" | "restart") => {
+    const guidances: (string | undefined)[] = [];
+    const runner = vi.fn(async (schedule: ScheduleRecord, runId: string, _signal: AbortSignal, kind: "start" | "restart", guidance?: string) => {
       kinds.push(kind);
+      guidances.push(guidance);
       if (kind === "start") {
         const createdAt = new Date(Date.now()).toISOString();
         let run: RunRecord = {
@@ -483,10 +508,11 @@ describe("schedule controller", () => {
     await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "interrupted" })), { timeout: 10_000 });
     const runId = runner.mock.calls[0]?.[1] as string;
 
-    await controller.resumeOccurrence(schedule.scheduleId, runId, host.cwd);
+    await controller.resumeOccurrence(schedule.scheduleId, runId, host.cwd, "use the repaired API");
     await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ pauseReason: "completed" })), { timeout: 10_000 });
 
     expect(kinds).toEqual(["start", "restart"]);
+    expect(guidances).toEqual([undefined, "use the repaired API"]);
     expect(runner.mock.calls[1]?.[1]).toBe(runId);
     await controller.shutdown();
   });

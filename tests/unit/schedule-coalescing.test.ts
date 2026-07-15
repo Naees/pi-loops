@@ -3,7 +3,9 @@ import { createProjectId } from "../../src/shared/ids.js";
 import type { ScheduleRecord } from "../../src/shared/types.js";
 import {
   completeScheduleOccurrence,
+  enableScheduleDefinition,
   interruptScheduleOccurrence,
+  pauseScheduleDefinition,
   reconcileMissedSchedule,
   resumeScheduleOccurrence,
   triggerSchedule,
@@ -119,5 +121,33 @@ describe("schedule coalescing", () => {
     delete once.nextFireAt;
     expect(resumeScheduleOccurrence(once, "run_deadbeef", new Date("2026-07-12T12:07:00.000Z")).nextFireAt).toBeUndefined();
     expect(() => resumeScheduleOccurrence(recurring(), "run_deadbeef", new Date())).toThrow("not resumable");
+  });
+
+  it("pauses and enables schedule definitions without conflating interrupted runs", () => {
+    const paused = pauseScheduleDefinition(recurring(), new Date("2026-07-12T12:01:00.000Z"));
+    expect(paused).toEqual(expect.objectContaining({ state: "paused", pauseReason: "user" }));
+    expect(paused.nextFireAt).toBeUndefined();
+    expect(pauseScheduleDefinition(paused, new Date("2026-07-12T12:02:00.000Z"))).toBe(paused);
+
+    const enabled = enableScheduleDefinition(paused, new Date("2026-07-12T12:07:00.000Z"));
+    expect(enabled).toEqual(expect.objectContaining({ state: "enabled", nextFireAt: "2026-07-12T12:10:00.000Z" }));
+    expect(enabled.pauseReason).toBeUndefined();
+    const interrupted: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = recurring({
+      state: "paused",
+      pauseReason: "interrupted",
+    });
+    delete interrupted.nextFireAt;
+    expect(() => enableScheduleDefinition(interrupted, new Date()))
+      .toThrow("not paused by the user");
+  });
+
+  it("only re-enables a user-paused one-off before its fire time", () => {
+    const once = pauseScheduleDefinition(recurring({
+      timing: { kind: "once", fireAt: "2026-07-12T12:05:00.000Z" },
+    }), new Date("2026-07-12T12:01:00.000Z"));
+    expect(enableScheduleDefinition(once, new Date("2026-07-12T12:02:00.000Z")).nextFireAt)
+      .toBe("2026-07-12T12:05:00.000Z");
+    expect(() => enableScheduleDefinition(once, new Date("2026-07-12T12:05:00.000Z")))
+      .toThrow("expired");
   });
 });

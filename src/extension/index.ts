@@ -105,9 +105,9 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   };
 
   const triggerStatus = async (ctx: ExtensionContext): Promise<string> => {
-    const records = await triggers.list(ctx.cwd);
+    const records = await triggers.listStatus(ctx.cwd);
     if (records.length === 0) return "";
-    return ["Triggers:", ...records.map(formatTriggerStatus)].join("\n");
+    return ["Triggers:", ...records.map(({ trigger, failure }) => formatTriggerStatus(trigger, failure))].join("\n");
   };
 
   const storedRun = async (ctx: ExtensionContext, runId: string): Promise<RunRecord | undefined> => {
@@ -182,19 +182,30 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   };
 
   const resumeWork = async (request: GoalResumeRequest, ctx: ExtensionContext, goalHost: GoalLoopHost) => {
+    if (request.runId?.startsWith("schedule_")) {
+      if (request.guidance !== undefined || request.budget !== undefined) {
+        throw new Error("Schedule definition resume does not accept guidance or budget overrides");
+      }
+      await scheduler.enable(request.runId, ctx.cwd);
+      return { kind: "scheduleDefinition" as const, scheduleId: request.runId };
+    }
     if (request.runId?.startsWith("trigger_")) {
-      if (request.guidance || request.budget) throw new Error("Trigger definition resume does not accept guidance or budget overrides");
+      if (request.guidance !== undefined || request.budget !== undefined) {
+        throw new Error("Trigger definition resume does not accept guidance or budget overrides");
+      }
       await triggers.enable(request.runId, ctx.cwd);
       return { kind: "triggerDefinition" as const, triggerId: request.runId };
     }
     await recommendSubagentsOnce(ctx);
     const unattendedRun = await unattendedResumeCandidate(ctx, request.runId);
     if (unattendedRun?.mode === "scheduled" && unattendedRun.scheduleId) {
-      await scheduler.resumeOccurrence(unattendedRun.scheduleId, unattendedRun.runId, ctx.cwd);
+      if (request.budget !== undefined) throw new Error("Unattended run resume does not accept budget overrides");
+      await scheduler.resumeOccurrence(unattendedRun.scheduleId, unattendedRun.runId, ctx.cwd, request.guidance);
       return { kind: "schedule" as const, run: unattendedRun };
     }
     if (unattendedRun?.mode === "proactive" && unattendedRun.triggerId) {
-      await triggers.resumeOccurrence(unattendedRun.triggerId, unattendedRun.runId, ctx.cwd);
+      if (request.budget !== undefined) throw new Error("Unattended run resume does not accept budget overrides");
+      await triggers.resumeOccurrence(unattendedRun.triggerId, unattendedRun.runId, ctx.cwd, request.guidance);
       return { kind: "trigger" as const, run: unattendedRun };
     }
     return { kind: "goal" as const, run: await goals.resume(request, goalHost) };
@@ -231,7 +242,8 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             break;
           case "resume": {
             const resumed = await resumeWork(parseResumeValue(parsed.value), ctx, commandHost);
-            if (resumed.kind === "triggerDefinition") ctx.ui.notify(`${resumed.triggerId} resumed`, "info");
+            if (resumed.kind === "scheduleDefinition") ctx.ui.notify(`${resumed.scheduleId} resumed`, "info");
+            else if (resumed.kind === "triggerDefinition") ctx.ui.notify(`${resumed.triggerId} resumed`, "info");
             break;
           }
           case "clean": {
@@ -347,6 +359,9 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
             ...budgetFromTool(params),
           };
           const resumed = await resumeWork(request, ctx, toolHost);
+          if (resumed.kind === "scheduleDefinition") {
+            return { content: [{ type: "text", text: `${resumed.scheduleId} resumed` }], details: { scheduleId: resumed.scheduleId }, terminate: true };
+          }
           if (resumed.kind === "triggerDefinition") {
             return { content: [{ type: "text", text: `${resumed.triggerId} resumed` }], details: { triggerId: resumed.triggerId }, terminate: true };
           }
@@ -391,13 +406,14 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     }
     try {
       await scheduler.start({ cwd: ctx.cwd, notify: (message, level) => ctx.ui.notify(message, level) },
-        (schedule, runId, signal, kind) => unattended.runSchedule(
+        (schedule, runId, signal, kind, guidance) => unattended.runSchedule(
           schedule,
           runId,
           new CurrentModelEvaluator(ctx),
           createUnattendedHost(pi, ctx),
           signal,
           kind,
+          guidance,
         ));
     } catch (error) {
       ctx.ui.notify(`Pi Loops scheduler startup failed: ${errorMessage(error)}`, "error");
@@ -405,13 +421,14 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
     try {
       await triggers.start(
         { cwd: ctx.cwd, notify: (message, level) => ctx.ui.notify(message, level) },
-        (trigger, runId, signal, kind) => unattended.runTrigger(
+        (trigger, runId, signal, kind, guidance) => unattended.runTrigger(
           trigger,
           runId,
           new CurrentModelEvaluator(ctx),
           createUnattendedHost(pi, ctx),
           signal,
           kind,
+          guidance,
         ),
       );
       triggerEvents.activate(ctx);

@@ -4,6 +4,13 @@ Pi Loops follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Persist schedule-definition pause/resume transitions and forward explicit guidance to resumed unattended work while rejecting unsupported budget overrides.
+- Retry trigger settlement without unhandled rejections or shutdown hangs, and serialize watcher failures against concurrent trigger launches.
+- Re-arm filesystem watchers after safe same-path replacements and persist bounded watcher diagnostics for `/loops status`.
+- Keep release-candidate artifact validation usable after the manifest version has already been published.
+
 ## [0.1.0] - 2026-07-12
 
 Initial release.

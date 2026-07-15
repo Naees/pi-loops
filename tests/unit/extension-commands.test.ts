@@ -40,6 +40,7 @@ describe("extension command parsing", () => {
   it("distinguishes a run ID from free-form resume guidance", () => {
     expect(parseResumeValue("")).toEqual({});
     expect(parseResumeValue("run_1234abcd use the new API")).toEqual({ runId: "run_1234abcd", guidance: "use the new API" });
+    expect(parseResumeValue("schedule_1234abcd")).toEqual({ runId: "schedule_1234abcd" });
     expect(parseResumeValue("trigger_1234abcd")).toEqual({ runId: "trigger_1234abcd" });
     expect(parseResumeValue("use the new API")).toEqual({ guidance: "use the new API" });
   });

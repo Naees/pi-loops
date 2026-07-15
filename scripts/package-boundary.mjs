@@ -31,7 +31,10 @@ export function findMissingPackagePaths(files) {
 }
 
 export function packagePublishReport(value, packageName) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (Array.isArray(value)) {
+    return value.find((report) => report && typeof report === "object" && !Array.isArray(report) && report.name === packageName);
+  }
+  if (!value || typeof value !== "object") return undefined;
   if (value.name === packageName) return value;
   const keyed = value[packageName];
   return keyed && typeof keyed === "object" && !Array.isArray(keyed) && keyed.name === packageName

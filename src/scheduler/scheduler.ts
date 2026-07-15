@@ -15,7 +15,9 @@ import { createUniqueRunId, resolveBudget } from "../controller/attended-goal-su
 import { isResumableRun } from "../controller/state-machine.js";
 import {
   completeScheduleOccurrence,
+  enableScheduleDefinition,
   interruptScheduleOccurrence,
+  pauseScheduleDefinition,
   reconcileMissedSchedule,
   resumeScheduleOccurrence,
   triggerSchedule,
@@ -56,6 +58,7 @@ export type ScheduleOccurrenceRunner = (
   runId: string,
   signal: AbortSignal,
   kind: ScheduleOccurrenceKind,
+  guidance?: string,
 ) => Promise<ScheduleOccurrenceResult>;
 
 export interface SchedulerHost {
@@ -195,6 +198,23 @@ export class ScheduleController {
       await direct.promise;
       return id;
     }
+    if (isScheduleId(id)) {
+      return this.#queue.run(async () => {
+        const currentBinding = await resolveProjectBinding(cwd);
+        if (this.#binding?.projectId !== currentBinding.projectId || this.#stopping) return undefined;
+        let found = false;
+        await this.#withMutableStore(currentBinding, async (store) => {
+          const schedule = await store.load(id);
+          if (!schedule) return;
+          found = true;
+          const paused = pauseScheduleDefinition(schedule, this.#now());
+          if (paused !== schedule) await store.save(paused);
+        });
+        if (!found) return undefined;
+        await this.#armNextTimer();
+        return id;
+      });
+    }
     const schedule = (await this.list(cwd)).find((candidate) => candidate.activeRunId === id);
     if (!schedule) return undefined;
     const occurrence = this.#active.get(schedule.scheduleId);
@@ -204,7 +224,23 @@ export class ScheduleController {
     return schedule.scheduleId;
   }
 
-  async resumeOccurrence(scheduleId: string, runId: string, cwd: string): Promise<void> {
+  async enable(scheduleId: string, cwd: string): Promise<void> {
+    if (!isScheduleId(scheduleId)) throw new Error(`Invalid schedule ID: ${scheduleId}`);
+    await this.#queue.run(async () => {
+      const binding = await resolveProjectBinding(cwd);
+      if (this.#binding?.projectId !== binding.projectId || this.#stopping) {
+        throw new Error("Schedule controller is not running for this project");
+      }
+      await this.#withMutableStore(binding, async (store) => {
+        const schedule = await store.load(scheduleId);
+        if (!schedule) throw new Error(`Schedule not found: ${scheduleId}`);
+        await store.save(enableScheduleDefinition(schedule, this.#now()));
+      });
+      await this.#armNextTimer();
+    });
+  }
+
+  async resumeOccurrence(scheduleId: string, runId: string, cwd: string, guidance?: string): Promise<void> {
     if (!isScheduleId(scheduleId)) throw new Error(`Invalid schedule ID: ${scheduleId}`);
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
     const initialBinding = await resolveProjectBinding(cwd);
@@ -236,7 +272,7 @@ export class ScheduleController {
         });
         if (!resumed) throw new Error(`Schedule could not be resumed: ${scheduleId}`);
         if (this.#beforeOccurrenceLaunch) await this.#beforeOccurrenceLaunch();
-        transferred = this.#launchOccurrence(resumed, runId, claims, "restart");
+        transferred = this.#launchOccurrence(resumed, runId, claims, "restart", guidance);
         if (!transferred) {
           await this.#retryScheduleLease(async () => this.#interruptUnlaunchedOccurrence(scheduleId, runId, claims), false);
         }
@@ -412,6 +448,7 @@ export class ScheduleController {
     runId: string,
     claims: OccurrenceClaims,
     kind: ScheduleOccurrenceKind = "start",
+    guidance?: string,
   ): boolean {
     const runner = this.#runner;
     if (!runner || this.#stopping || claims.signal.aborted) return false;
@@ -423,7 +460,9 @@ export class ScheduleController {
       try {
         let result: ScheduleOccurrenceResult;
         try {
-          result = await runner(schedule, runId, abort.signal, kind);
+          result = guidance === undefined
+            ? await runner(schedule, runId, abort.signal, kind)
+            : await runner(schedule, runId, abort.signal, kind, guidance);
         } catch (error) {
           result = { status: "interrupted" };
           if (!claims.signal.aborted) {

@@ -310,7 +310,15 @@ describe("unattended run controller", () => {
     expect(interrupted).toEqual(expect.objectContaining({ state: "awaiting_user", cycle: 1, budgetEpoch: 1 }));
     const deadline = interrupted?.budgetDeadlineAt;
 
-    await expect(controller.runSchedule(schedule, "run_1234abcd", evaluator, host, new AbortController().signal, "restart"))
+    await expect(controller.runSchedule(
+      schedule,
+      "run_1234abcd",
+      evaluator,
+      host,
+      new AbortController().signal,
+      "restart",
+      "use the repaired API",
+    ))
       .resolves.toEqual({ status: "finished" });
 
     expect(git.create).toHaveBeenCalledOnce();
@@ -320,6 +328,7 @@ describe("unattended run controller", () => {
       runId: "run_1234abcd",
       resume: { sessionId: "session-id", sessionFile: "/tmp/session.jsonl" },
     }));
+    expect(rpc.worker.runCycle.mock.calls[1]?.[0]).toContain("Feedback from the previous cycle:\nuse the repaired API");
     expect(await new RunStore(dataRoot, projectId).load("run_1234abcd")).toEqual(expect.objectContaining({
       state: "completed",
       runId: "run_1234abcd",

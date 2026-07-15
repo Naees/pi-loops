@@ -229,7 +229,7 @@ Resume this attended run with a new finite budget epoch using these limits.
 - Overrides apply only to the new run, schedule, or attended resume.
 - Overrides do not change package-wide defaults.
 - `/loops goal --max-cycles ...` is not supported; Pi Loops would treat the flags as goal text.
-- Trigger definitions and unattended resumes cannot currently receive custom limits through the public interface.
+- Trigger definitions and unattended resumes cannot currently receive custom limits through the public interface; attempts to supply them are rejected explicitly.
 - `stallThreshold` is not currently exposed through `pi_loops`.
 - Do not edit installed package files directly; upgrades may overwrite those changes.
 

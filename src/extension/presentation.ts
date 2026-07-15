@@ -40,10 +40,16 @@ export function formatScheduleStatus(schedule: ScheduleRecord): string {
   return `${schedule.scheduleId}  ${schedule.state}${pause}  ${schedule.normalizedExpression}${next}${active} — ${schedule.goal}`;
 }
 
-export function formatTriggerStatus(trigger: TriggerRecord): string {
+export function formatTriggerStatus(
+  trigger: TriggerRecord,
+  failure?: { readonly reason: string; readonly failedAt: string },
+): string {
   const source = trigger.source.kind === "event" ? "event" : `watch ${trigger.source.relativePath}`;
   const active = trigger.activeRunId ? ` active ${trigger.activeRunId}` : "";
-  return `${trigger.triggerId}  ${trigger.state}  ${source}${active} — ${trigger.goal}`;
+  const failed = failure
+    ? ` error ${failure.failedAt}: ${failure.reason.replace(/\s+/g, " ").trim()}`
+    : "";
+  return `${trigger.triggerId}  ${trigger.state}  ${source}${active}${failed} — ${trigger.goal}`;
 }
 
 export function commandHelp(): string {
@@ -53,7 +59,7 @@ export function commandHelp(): string {
     "/loops watch <project-path|event> -- <goal>",
     "/loops status",
     "/loops stop [run-id|schedule-id|trigger-id]",
-    "/loops resume [run-id|trigger-id] [guidance]",
+    "/loops resume [run-id|schedule-id|trigger-id] [guidance]",
     "/loops clean",
     "/loops delete <run-id|schedule-id|trigger-id>",
   ].join("\n");

@@ -72,6 +72,10 @@ describe("extension presentation", () => {
       updatedAt: schedule.updatedAt,
     };
     expect(formatTriggerStatus(trigger)).toBe("trigger_1234abcd  enabled  watch src — regenerate");
+    expect(formatTriggerStatus(trigger, {
+      reason: "watcher failed\nwith EMFILE",
+      failedAt: "2026-07-12T00:02:00.000Z",
+    })).toContain("error 2026-07-12T00:02:00.000Z: watcher failed with EMFILE");
     expect(commandHelp()).toContain("/loops schedule <time-expression> -- <goal>");
     expect(commandHelp()).toContain("/loops watch <project-path|event> -- <goal>");
   });

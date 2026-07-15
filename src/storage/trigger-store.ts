@@ -4,12 +4,32 @@ import { createProjectId, isProjectId, isRunId, isTriggerId } from "../shared/id
 import { TRIGGER_STATES, type TriggerRecord, type TriggerSource, type TriggerState } from "../shared/types.js";
 import { hasOnlyKeys, isPositiveSafeInteger, isRecord } from "../shared/validation.js";
 import { hasValidStoredCompletionDefinition, isCanonicalIsoDate } from "./record-validation.js";
-import { listRecordIds, readStoredJsonRecord, writeStoredJsonRecord } from "./json-record-files.js";
+import { listRecordIds, readBoundedJsonFile, readStoredJsonRecord, writeStoredJsonRecord } from "./json-record-files.js";
 import { assertWriterLease, type WriterLease } from "./lease.js";
 
 const MAX_TRIGGER_RECORD_BYTES = 1024 * 1024;
 const OVERSIZED_TRIGGER_RECORD = `Trigger record exceeds ${MAX_TRIGGER_RECORD_BYTES} bytes`;
+const MAX_TRIGGER_FAILURE_BYTES = 16 * 1024;
+const MAX_TRIGGER_FAILURE_REASON_BYTES = 8 * 1024;
 export const MAX_TRIGGER_DEFINITIONS = 50;
+
+interface TriggerFailureRecord {
+  readonly schemaVersion: 1;
+  readonly triggerId: string;
+  readonly reason: string;
+  readonly failedAt: string;
+}
+
+function parseTriggerFailure(value: unknown): TriggerFailureRecord {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["schemaVersion", "triggerId", "reason", "failedAt"]) ||
+    value.schemaVersion !== 1 || typeof value.triggerId !== "string" || !isTriggerId(value.triggerId) ||
+    typeof value.reason !== "string" || value.reason.trim().length === 0 ||
+    Buffer.byteLength(value.reason, "utf8") > MAX_TRIGGER_FAILURE_REASON_BYTES ||
+    !isCanonicalIsoDate(value.failedAt)) {
+    throw new Error("Trigger failure record has an invalid shape");
+  }
+  return value as unknown as TriggerFailureRecord;
+}
 const MIN_DEBOUNCE_MS = 100;
 const MAX_DEBOUNCE_MS = 60_000;
 
@@ -91,6 +111,7 @@ export function triggerClaimLeasePath(dataRoot: string, projectId: string, trigg
 export class TriggerStore {
   readonly #projectId: string;
   readonly #directory: string;
+  readonly #failureDirectory: string;
   readonly #expectedLeasePath: string;
   readonly #lease: WriterLease | undefined;
 
@@ -98,6 +119,7 @@ export class TriggerStore {
     if (!isProjectId(projectId)) throw new Error(`Invalid project ID: ${projectId}`);
     this.#projectId = projectId;
     this.#directory = join(dataRoot, "projects", projectId, "triggers");
+    this.#failureDirectory = join(dataRoot, "projects", projectId, "trigger-failures");
     this.#expectedLeasePath = triggerLeasePath(dataRoot, projectId);
     if (lease && lease.path !== this.#expectedLeasePath) throw new Error("Trigger lease does not belong to this project store");
     this.#lease = lease;
@@ -141,9 +163,42 @@ export class TriggerStore {
     return triggers;
   }
 
+  async saveFailure(failure: TriggerFailureRecord): Promise<void> {
+    await this.#assertMutationLease();
+    parseTriggerFailure(failure);
+    await this.loadFailure(failure.triggerId);
+    const trigger = await this.load(failure.triggerId);
+    if (!trigger || trigger.source.kind !== "filesystem") {
+      throw new Error(`Filesystem trigger not found for failure record: ${failure.triggerId}`);
+    }
+    await writeStoredJsonRecord(
+      this.#failurePath(failure.triggerId),
+      failure,
+      MAX_TRIGGER_FAILURE_BYTES,
+      `Trigger failure record exceeds ${MAX_TRIGGER_FAILURE_BYTES} bytes`,
+    );
+  }
+
+  async loadFailure(triggerId: string): Promise<TriggerFailureRecord | undefined> {
+    const value = await readBoundedJsonFile(
+      this.#failurePath(triggerId),
+      MAX_TRIGGER_FAILURE_BYTES,
+      `Trigger failure record exceeds ${MAX_TRIGGER_FAILURE_BYTES} bytes`,
+    );
+    return value === undefined ? undefined : parseTriggerFailure(value);
+  }
+
+  async clearFailure(triggerId: string): Promise<void> {
+    await this.#assertMutationLease();
+    if (await this.loadFailure(triggerId)) await rm(this.#failurePath(triggerId), { force: true });
+  }
+
   async delete(triggerId: string): Promise<void> {
     await this.#assertMutationLease();
-    await rm(this.#path(triggerId), { force: true });
+    await Promise.all([
+      rm(this.#path(triggerId), { force: true }),
+      rm(this.#failurePath(triggerId), { force: true }),
+    ]);
   }
 
   async #assertMutationLease(): Promise<void> {
@@ -153,5 +208,9 @@ export class TriggerStore {
 
   #path(triggerId: string): string {
     return join(this.#directory, triggerFileName(triggerId));
+  }
+
+  #failurePath(triggerId: string): string {
+    return join(this.#failureDirectory, triggerFileName(triggerId));
   }
 }

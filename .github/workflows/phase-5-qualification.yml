@@ -69,5 +69,8 @@ jobs:
       - run: git --version
       - run: node --version
       - run: node node_modules/@earendil-works/pi-coding-agent/dist/cli.js --version
+      - run: npm run test:native:filesystem:qualification
+        env:
+          PI_LOOPS_NATIVE_WATCH_QUALIFICATION: "1"
       - run: npm run test:rpc:lifecycle:qualification
       - run: npm run test:e2e:proactive:qualification
