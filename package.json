@@ -1,6 +1,6 @@
 {
   "name": "@naees/pi-loops",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bounded goal, schedule, and proactive loops for Pi",
   "type": "module",
   "license": "MIT",
