@@ -63,6 +63,7 @@ describe("package boundary", () => {
     expect(workflow).not.toContain("run: npm publish release/*.tgz --access public");
     expect(workflow).not.toContain("NODE_AUTH_TOKEN");
     expect(workflow).not.toContain("NPM_TOKEN");
+    expect(workflow).not.toMatch(/^\s+registry-url:/mu);
   });
 
   it("normalizes package inventories and reports forbidden or missing paths", () => {
