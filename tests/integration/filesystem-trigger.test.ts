@@ -134,6 +134,40 @@ describe("filesystem triggers", () => {
     manager.shutdown();
   });
 
+  it("re-arms a watched file after an atomic same-path replacement", async () => {
+    const { root, projectRoot } = await project();
+    const onTrigger = vi.fn(async () => undefined);
+    const listeners: ((eventType: string, filename: string | Buffer | null) => void)[] = [];
+    const watchers: FSWatcher[] = [];
+    const manager = new FilesystemTriggerManager({
+      onTrigger,
+      onError: vi.fn(),
+      watch: (_path, _options, callback) => {
+        listeners.push(callback);
+        const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
+        watchers.push(watcher);
+        return watcher;
+      },
+    });
+    const watchedFile = join(projectRoot, "src", "input.txt");
+    await manager.upsert({
+      ...trigger(projectRoot),
+      source: { kind: "filesystem", relativePath: "src/input.txt", debounceMs: 100 },
+    });
+
+    const replacement = join(root, "replacement.txt");
+    await writeFile(replacement, "replacement\n");
+    await rename(replacement, watchedFile);
+    listeners[0]?.("rename", null);
+
+    await vi.waitFor(() => expect(onTrigger).toHaveBeenCalledOnce());
+    expect(listeners).toHaveLength(2);
+    expect(watchers[0]?.close).toHaveBeenCalledOnce();
+    listeners[1]?.("change", null);
+    await vi.waitFor(() => expect(onTrigger).toHaveBeenCalledTimes(2));
+    manager.shutdown();
+  });
+
   it("fails closed on unattributed recursive events", async () => {
     const { projectRoot } = await project();
     const onTrigger = vi.fn(async () => undefined);

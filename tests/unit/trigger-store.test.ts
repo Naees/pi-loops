@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -54,11 +54,41 @@ describe("trigger store", () => {
     expect(await store.load("trigger_00000001")).toBeUndefined();
   });
 
+  it("persists bounded watcher failures separately from frozen trigger records", async () => {
+    const { store, projectRoot, projectId } = await harness();
+    const record = trigger(projectRoot, projectId);
+    await store.save(record);
+    await store.saveFailure({
+      schemaVersion: 1,
+      triggerId: record.triggerId,
+      reason: "native watcher failed",
+      failedAt: "2026-07-12T12:01:00.000Z",
+    });
+    await expect(store.loadFailure(record.triggerId)).resolves.toEqual(expect.objectContaining({ reason: "native watcher failed" }));
+    await store.clearFailure(record.triggerId);
+    await expect(store.loadFailure(record.triggerId)).resolves.toBeUndefined();
+    await store.saveFailure({
+      schemaVersion: 1,
+      triggerId: record.triggerId,
+      reason: "failed again",
+      failedAt: "2026-07-12T12:02:00.000Z",
+    });
+    await store.delete(record.triggerId);
+    await expect(store.loadFailure(record.triggerId)).resolves.toBeUndefined();
+  });
+
   it("requires the trigger-store lease and rejects traversal IDs", async () => {
     const { dataRoot, projectRoot, projectId } = await harness();
     const unlocked = new TriggerStore(dataRoot, projectId);
     await expect(unlocked.save(trigger(projectRoot, projectId))).rejects.toThrow("requires the project trigger lease");
+    await expect(unlocked.saveFailure({
+      schemaVersion: 1,
+      triggerId: "trigger_00000001",
+      reason: "failed",
+      failedAt: "2026-07-12T12:00:00.000Z",
+    })).rejects.toThrow("requires the project trigger lease");
     await expect(unlocked.load("trigger_../../escape")).rejects.toThrow("Invalid trigger ID");
+    await expect(unlocked.loadFailure("trigger_../../escape")).rejects.toThrow("Invalid trigger ID");
     expect(() => triggerClaimLeasePath(dataRoot, projectId, "trigger_../../escape")).toThrow("Invalid trigger ID");
   });
 
@@ -72,6 +102,29 @@ describe("trigger store", () => {
     await expect(store.save({ ...valid, state: "running" })).rejects.toThrow("invalid shape");
     await expect(store.save({ ...valid, source: { kind: "event", extra: true } } as unknown as TriggerRecord))
       .rejects.toThrow("invalid shape");
+  });
+
+  it("does not clear or overwrite unknown watcher failure state", async () => {
+    const { store, dataRoot, projectId } = await harness();
+    const directory = join(dataRoot, "projects", projectId, "trigger-failures");
+    const path = join(directory, "trigger_00000001.json");
+    const unknown = `${JSON.stringify({
+      schemaVersion: 2,
+      triggerId: "trigger_00000001",
+      reason: "future state",
+      failedAt: "2026-07-12T12:00:00.000Z",
+    }, null, 2)}\n`;
+    await mkdir(directory, { recursive: true });
+    await writeFile(path, unknown);
+
+    await expect(store.clearFailure("trigger_00000001")).rejects.toThrow("invalid shape");
+    await expect(store.saveFailure({
+      schemaVersion: 1,
+      triggerId: "trigger_00000001",
+      reason: "replacement",
+      failedAt: "2026-07-12T12:01:00.000Z",
+    })).rejects.toThrow("invalid shape");
+    expect(await readFile(path, "utf8")).toBe(unknown);
   });
 
   it("fails closed above the per-project trigger-definition limit", async () => {

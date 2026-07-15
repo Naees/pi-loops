@@ -125,6 +125,68 @@ describe("trigger controller", () => {
     await controller.shutdown();
   });
 
+  it("abandons contended settlement promptly during shutdown and reconciles on restart", async () => {
+    const { dataRoot, projectId, host, notifications } = await harness();
+    const controller = new TriggerController({ dataRoot, settlementRetryMs: 10 });
+    let finish: ((result: { status: "finished" }) => void) | undefined;
+    await controller.start(host, () => new Promise<{ status: "finished" }>((resolve) => { finish = resolve; }));
+    const trigger = await controller.create({ source: { kind: "event" }, goal: "run checks" }, host);
+    await controller.fire(trigger.triggerId, host.cwd);
+    const storeLease = await acquireWriterLease(triggerLeasePath(dataRoot, projectId), 30_000);
+    leases.push(storeLease);
+    finish?.({ status: "finished" });
+    await vi.waitFor(() => expect(notifications).toContain(`${trigger.triggerId}: waiting to persist proactive occurrence result`));
+
+    await expect(controller.shutdown()).resolves.toBeUndefined();
+    expect((await controller.list(host.cwd))[0]?.state).toBe("running");
+
+    await releaseWriterLease(storeLease);
+    await controller.start(host, vi.fn(async () => ({ status: "finished" as const })));
+    expect((await controller.list(host.cwd))[0]?.state).toBe("enabled");
+    await controller.shutdown();
+  });
+
+  it("retries a requested pause outside the serial queue after settlement contention", async () => {
+    const { dataRoot, projectId, host } = await harness();
+    const controller = new TriggerController({ dataRoot, settlementRetryMs: 10 });
+    const runner = vi.fn((_trigger, _runId, signal: AbortSignal) => new Promise<{ status: "interrupted" }>((resolve) => {
+      signal.addEventListener("abort", () => resolve({ status: "interrupted" }), { once: true });
+    }));
+    await controller.start(host, runner);
+    const trigger = await controller.create({ source: { kind: "event" }, goal: "run checks" }, host);
+    await controller.fire(trigger.triggerId, host.cwd);
+    const storeLease = await acquireWriterLease(triggerLeasePath(dataRoot, projectId), 30_000);
+    leases.push(storeLease);
+
+    const stopping = controller.stop(trigger.triggerId, host.cwd);
+    await vi.waitFor(() => expect(runner.mock.calls[0]?.[2].aborted).toBe(true));
+    await releaseWriterLease(storeLease);
+    await expect(stopping).resolves.toBe(trigger.triggerId);
+    expect((await controller.list(host.cwd))[0]?.state).toBe("paused");
+    await controller.shutdown();
+  });
+
+  it("does not hold the serial queue during trigger-store contention", async () => {
+    const { dataRoot, projectId, host, notifications } = await harness();
+    const controller = new TriggerController({ dataRoot, settlementRetryMs: 10 });
+    await controller.start(host, vi.fn(async () => ({ status: "finished" as const })));
+    const trigger = await controller.create({ source: { kind: "event" }, goal: "run checks" }, host);
+    const storeLease = await acquireWriterLease(triggerLeasePath(dataRoot, projectId), 30_000);
+    leases.push(storeLease);
+    const firing = controller.fire(trigger.triggerId, host.cwd);
+    await vi.waitFor(() => expect(notifications).toContain(`${trigger.triggerId}: waiting for trigger-store access`));
+
+    await expect(Promise.allSettled([firing, controller.shutdown()])).resolves.toEqual([
+      expect.objectContaining({
+        status: "rejected",
+        reason: expect.objectContaining({ message: expect.stringMatching(/^Trigger controller is (?:stopping|not running for this project)$/) }),
+      }),
+      { status: "fulfilled", value: undefined },
+    ]);
+    await releaseWriterLease(storeLease);
+    expect((await controller.list(host.cwd))[0]?.state).toBe("enabled");
+  });
+
   it("does not consume an event ID when delivery fails", async () => {
     const { dataRoot, host } = await harness();
     const controller = new TriggerController({ dataRoot });
@@ -430,6 +492,49 @@ describe("trigger controller", () => {
     await controller.shutdown();
   });
 
+  it("serializes a watcher failure against a contended trigger fire", async () => {
+    const { dataRoot, projectId, host, notifications } = await harness();
+    const fake = fakeWatchHarness();
+    const runner = vi.fn(async () => ({ status: "finished" as const }));
+    const controller = new TriggerController({ dataRoot, settlementRetryMs: 10, watch: fake.watch });
+    await controller.start(host, runner);
+    const trigger = await controller.create({ source: { kind: "filesystem", path: "." }, goal: "run checks" }, host);
+    const storeLease = await acquireWriterLease(triggerLeasePath(dataRoot, projectId), 30_000);
+    leases.push(storeLease);
+    const firing = controller.fire(trigger.triggerId, host.cwd);
+    await vi.waitFor(() => expect(notifications).toContain(`${trigger.triggerId}: waiting for trigger-store access`));
+
+    fake.watchers[0]?.emit("error", new Error("race failure"));
+    await releaseWriterLease(storeLease);
+    await expect(firing).resolves.toBe("ignored");
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]?.state).toBe("paused"));
+    expect(runner).not.toHaveBeenCalled();
+    expect((await controller.listStatus(host.cwd))[0]?.failure).toEqual(expect.objectContaining({ reason: "race failure" }));
+    expect(notifications.some((message) => message.includes("could not be persisted as paused"))).toBe(false);
+    await controller.shutdown();
+  });
+
+  it("repairs an aborted occurrence before pausing after settlement contention", async () => {
+    const { dataRoot, projectId, host } = await harness();
+    const fake = fakeWatchHarness();
+    const controller = new TriggerController({ dataRoot, settlementRetryMs: 10, watch: fake.watch });
+    const runner = vi.fn((_trigger, _runId, signal: AbortSignal) => new Promise<{ status: "interrupted" }>((resolve) => {
+      signal.addEventListener("abort", () => resolve({ status: "interrupted" }), { once: true });
+    }));
+    await controller.start(host, runner);
+    const trigger = await controller.create({ source: { kind: "filesystem", path: "." }, goal: "run checks" }, host);
+    await controller.fire(trigger.triggerId, host.cwd);
+    const storeLease = await acquireWriterLease(triggerLeasePath(dataRoot, projectId), 30_000);
+    leases.push(storeLease);
+
+    fake.watchers[0]?.emit("error", new Error("active watcher failed"));
+    await vi.waitFor(() => expect(runner.mock.calls[0]?.[2].aborted).toBe(true));
+    await releaseWriterLease(storeLease);
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]?.state).toBe("paused"));
+    expect((await controller.listStatus(host.cwd))[0]?.failure).toEqual(expect.objectContaining({ reason: "active watcher failed" }));
+    await controller.shutdown();
+  });
+
   it("persists a runtime filesystem watcher failure as paused", async () => {
     const { dataRoot, host, notifications } = await harness();
     const fake = fakeWatchHarness();
@@ -439,6 +544,7 @@ describe("trigger controller", () => {
 
     fake.watchers[0]?.emit("error", new Error("watch failed"));
     await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "paused" })));
+    expect((await controller.listStatus(host.cwd))[0]?.failure).toEqual(expect.objectContaining({ reason: "watch failed" }));
     expect(notifications.some((message) => message.includes(`${trigger.triggerId}: filesystem trigger failed — watch failed`))).toBe(true);
     expect(fake.watchers[0]?.close).toHaveBeenCalledOnce();
     await controller.shutdown();
@@ -457,6 +563,9 @@ describe("trigger controller", () => {
 
     await expect(controller.start(host, vi.fn(async () => ({ status: "finished" as const })))).resolves.toBeUndefined();
     expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "paused" }));
+    expect((await controller.listStatus(host.cwd))[0]?.failure).toEqual(expect.objectContaining({
+      reason: expect.stringContaining("ENOENT"),
+    }));
     expect(notifications.some((message) => message.includes("filesystem watcher could not start"))).toBe(true);
     await controller.shutdown();
   });

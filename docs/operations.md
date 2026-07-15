@@ -83,6 +83,7 @@ Explicit resume guidance is sent to the first resumed worker cycle. Budget overr
 - `/loops resume <schedule-id>` enables a schedule definition that was explicitly paused by the user. An expired one-off schedule cannot be enabled.
 - `/loops stop <trigger-id>` pauses the trigger definition after cancelling its local active occurrence.
 - `/loops resume <trigger-id>` enables a paused trigger definition.
+- Native filesystem watcher failures pause the affected trigger; `/loops status` retains the failure timestamp and reason while it remains paused. A successful resume or explicit stop clears the diagnostic.
 - `/loops clean` removes only least-recently-used eligible terminal run records beyond the project limit.
 - `/loops delete <id>` requires interactive confirmation and removes the selected Pi Loops runtime record.
 

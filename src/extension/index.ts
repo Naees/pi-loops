@@ -105,9 +105,9 @@ export default function piLoopsExtension(pi: ExtensionAPI): void {
   };
 
   const triggerStatus = async (ctx: ExtensionContext): Promise<string> => {
-    const records = await triggers.list(ctx.cwd);
+    const records = await triggers.listStatus(ctx.cwd);
     if (records.length === 0) return "";
-    return ["Triggers:", ...records.map(formatTriggerStatus)].join("\n");
+    return ["Triggers:", ...records.map(({ trigger, failure }) => formatTriggerStatus(trigger, failure))].join("\n");
   };
 
   const storedRun = async (ctx: ExtensionContext, runId: string): Promise<RunRecord | undefined> => {
