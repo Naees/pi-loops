@@ -70,10 +70,8 @@ describe("filesystem triggers", () => {
     });
     await manager.upsert(trigger(projectRoot));
     const input = join(projectRoot, "src", "input.txt");
-    for (let index = 0; index < 20; index += 1) {
-      await writeFile(input, `value ${index}\n`);
-      listener?.("change", "input.txt");
-    }
+    await writeFile(input, "changed\n");
+    for (let index = 0; index < 20; index += 1) listener?.("change", "input.txt");
     await vi.waitFor(() => expect(onTrigger).toHaveBeenCalledOnce(), { timeout: 2_000 });
     manager.shutdown();
   });
