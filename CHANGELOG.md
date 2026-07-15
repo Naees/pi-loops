@@ -4,6 +4,8 @@ Pi Loops follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-15
+
 ### Fixed
 
 - Persist schedule-definition pause/resume transitions and forward explicit guidance to resumed unattended work while rejecting unsupported budget overrides.
