@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
+import type { FSWatcher } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import { acquireWriterLease, releaseWriterLease, type WriterLease } from "../../
 import { RunStore, writerLeasePath } from "../../src/storage/run-store.js";
 import { TriggerStore, triggerClaimLeasePath, triggerLeasePath } from "../../src/storage/trigger-store.js";
 import { TriggerController, type TriggerHost } from "../../src/triggers/controller.js";
+import type { WatchFunction } from "../../src/triggers/filesystem.js";
 
 const temporary: string[] = [];
 const claimFixture = join(process.cwd(), "scripts", "fixtures", "hold-trigger-claim.mjs");
@@ -59,6 +61,25 @@ async function saveTrigger(dataRoot: string, projectId: string, trigger: Trigger
   }
 }
 
+function fakeWatchHarness(): {
+  readonly watch: WatchFunction;
+  readonly listeners: ((eventType: string, filename: string | Buffer | null) => void)[];
+  readonly watchers: FSWatcher[];
+} {
+  const listeners: ((eventType: string, filename: string | Buffer | null) => void)[] = [];
+  const watchers: FSWatcher[] = [];
+  return {
+    listeners,
+    watchers,
+    watch: (_path, _options, listener) => {
+      listeners.push(listener);
+      const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
+      watchers.push(watcher);
+      return watcher;
+    },
+  };
+}
+
 describe("trigger controller", () => {
   it("coalesces a trigger storm into exactly one replacement occurrence", async () => {
     const { dataRoot, host } = await harness();
@@ -80,6 +101,27 @@ describe("trigger controller", () => {
     await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2));
     await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "enabled" })));
     expect(runner.mock.calls[0]?.[1]).not.toBe(runner.mock.calls[1]?.[1]);
+    await controller.shutdown();
+  });
+
+  it("retries occurrence settlement while the trigger store lease is contended", async () => {
+    const { dataRoot, projectId, host, notifications } = await harness();
+    const controller = new TriggerController({ dataRoot, settlementRetryMs: 10 });
+    let finish: ((result: { status: "finished" }) => void) | undefined;
+    const runner = vi.fn(() => new Promise<{ status: "finished" }>((resolve) => { finish = resolve; }));
+    await controller.start(host, runner);
+    const trigger = await controller.create({ source: { kind: "event" }, goal: "run checks" }, host);
+    await expect(controller.fire(trigger.triggerId, host.cwd)).resolves.toBe("started");
+
+    const storeLease = await acquireWriterLease(triggerLeasePath(dataRoot, projectId), 30_000);
+    leases.push(storeLease);
+    finish?.({ status: "finished" });
+    await vi.waitFor(() => expect(notifications).toContain(`${trigger.triggerId}: waiting to persist proactive occurrence result`));
+    expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "running" }));
+
+    await releaseWriterLease(storeLease);
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "enabled" })));
+    expect(notifications.some((message) => message.includes("settlement failed"))).toBe(false);
     await controller.shutdown();
   });
 
@@ -142,8 +184,10 @@ describe("trigger controller", () => {
 
   it("deduplicates the same filesystem delivery across competing controllers", async () => {
     const { dataRoot, host } = await harness();
-    const first = new TriggerController({ dataRoot, now: () => new Date("2026-07-12T12:00:00.000Z") });
-    const second = new TriggerController({ dataRoot, now: () => new Date("2026-07-12T12:00:00.000Z") });
+    const firstWatch = fakeWatchHarness();
+    const secondWatch = fakeWatchHarness();
+    const first = new TriggerController({ dataRoot, now: () => new Date("2026-07-12T12:00:00.000Z"), watch: firstWatch.watch });
+    const second = new TriggerController({ dataRoot, now: () => new Date("2026-07-12T12:00:00.000Z"), watch: secondWatch.watch });
     let release: (() => void) | undefined;
     const controlledRun = async () => {
       await new Promise<void>((resolve) => { release = resolve; });
@@ -342,12 +386,13 @@ describe("trigger controller", () => {
     const controller = new TriggerController({ dataRoot, now: () => new Date("2026-07-12T12:10:00.000Z") });
     await controller.start(host, runner);
 
-    await controller.resumeOccurrence(enabled.triggerId, run.runId, host.cwd);
+    await controller.resumeOccurrence(enabled.triggerId, run.runId, host.cwd, "inspect the generated files");
     await vi.waitFor(() => expect(runner).toHaveBeenCalledWith(
       expect.objectContaining({ triggerId: enabled.triggerId }),
       run.runId,
       expect.any(AbortSignal),
       "restart",
+      "inspect the generated files",
     ));
     await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]?.state).toBe("enabled"));
     await controller.shutdown();
@@ -356,15 +401,16 @@ describe("trigger controller", () => {
   it("launches a persisted filesystem definition after a debounced change", async () => {
     const { dataRoot, projectRoot, host } = await harness();
     const runner = vi.fn(async () => ({ status: "finished" as const }));
-    const controller = new TriggerController({ dataRoot });
+    const fake = fakeWatchHarness();
+    const controller = new TriggerController({ dataRoot, watch: fake.watch });
     await controller.start(host, runner);
     const trigger = await controller.create({
       source: { kind: "filesystem", path: ".", debounceMs: 100 },
       goal: "run checks",
     }, host);
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeFile(join(projectRoot, "changed.txt"), "changed\n");
+    fake.listeners[0]?.("change", "changed.txt");
     await vi.waitFor(() => expect(runner).toHaveBeenCalledOnce(), { timeout: 4_000 });
     expect(runner).toHaveBeenCalledWith(
       expect.objectContaining({ triggerId: trigger.triggerId, source: expect.objectContaining({ kind: "filesystem" }) }),
@@ -378,9 +424,40 @@ describe("trigger controller", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(runner).toHaveBeenCalledOnce();
     await controller.enable(trigger.triggerId, host.cwd);
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeFile(join(projectRoot, "resumed-change.txt"), "resumed\n");
+    fake.listeners[1]?.("change", "resumed-change.txt");
     await vi.waitFor(() => expect(runner).toHaveBeenCalledTimes(2), { timeout: 4_000 });
+    await controller.shutdown();
+  });
+
+  it("persists a runtime filesystem watcher failure as paused", async () => {
+    const { dataRoot, host, notifications } = await harness();
+    const fake = fakeWatchHarness();
+    const controller = new TriggerController({ dataRoot, watch: fake.watch });
+    await controller.start(host, vi.fn(async () => ({ status: "finished" as const })));
+    const trigger = await controller.create({ source: { kind: "filesystem", path: "." }, goal: "run checks" }, host);
+
+    fake.watchers[0]?.emit("error", new Error("watch failed"));
+    await vi.waitFor(async () => expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "paused" })));
+    expect(notifications.some((message) => message.includes(`${trigger.triggerId}: filesystem trigger failed — watch failed`))).toBe(true);
+    expect(fake.watchers[0]?.close).toHaveBeenCalledOnce();
+    await controller.shutdown();
+  });
+
+  it("persists an enabled filesystem definition as paused when startup cannot watch it", async () => {
+    const { dataRoot, projectRoot, projectId, host, notifications } = await harness();
+    const stored: { -readonly [Key in keyof TriggerRecord]: TriggerRecord[Key] } = {
+      ...runningTrigger(projectRoot, projectId),
+      state: "enabled",
+      source: { kind: "filesystem", relativePath: "missing", debounceMs: 100 },
+    };
+    delete stored.activeRunId;
+    await saveTrigger(dataRoot, projectId, stored);
+    const controller = new TriggerController({ dataRoot });
+
+    await expect(controller.start(host, vi.fn(async () => ({ status: "finished" as const })))).resolves.toBeUndefined();
+    expect((await controller.list(host.cwd))[0]).toEqual(expect.objectContaining({ state: "paused" }));
+    expect(notifications.some((message) => message.includes("filesystem watcher could not start"))).toBe(true);
     await controller.shutdown();
   });
 

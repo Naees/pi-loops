@@ -9,7 +9,7 @@ npm ci
 npm run release:candidate
 ```
 
-`release:candidate` runs type checks, tests, coverage, security, package inspection, packed-install compatibility, scheduled-writer validation, and publication dry-run checks without publishing.
+`release:candidate` runs type checks, tests, coverage, security, package inspection, packed-install compatibility, scheduled-writer validation, and publication-artifact dry-run checks without publishing. The dry-run validates the exact npm pack inventory locally and does not query whether the manifest version already exists in the registry.
 
 The stronger `npm run release:candidate:runtime` additionally requires an authenticated Pi 0.80.6 installation on a qualified macOS host. Native Linux and Windows lifecycle gates run through `.github/workflows/phase-5-qualification.yml`.
 

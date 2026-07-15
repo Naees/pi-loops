@@ -53,7 +53,7 @@ export function commandHelp(): string {
     "/loops watch <project-path|event> -- <goal>",
     "/loops status",
     "/loops stop [run-id|schedule-id|trigger-id]",
-    "/loops resume [run-id|trigger-id] [guidance]",
+    "/loops resume [run-id|schedule-id|trigger-id] [guidance]",
     "/loops clean",
     "/loops delete <run-id|schedule-id|trigger-id>",
   ].join("\n");

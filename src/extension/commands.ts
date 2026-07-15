@@ -56,7 +56,7 @@ export function parseWatchValue(value: string): TriggerCreateRequest {
 export function parseResumeValue(value: string): GoalResumeRequest {
   if (!value) return {};
   const [first, ...rest] = value.split(/\s+/);
-  if (first?.startsWith("run_") || first?.startsWith("trigger_")) {
+  if (first?.startsWith("run_") || first?.startsWith("schedule_") || first?.startsWith("trigger_")) {
     return { runId: first, ...(rest.length === 0 ? {} : { guidance: rest.join(" ") }) };
   }
   return { guidance: value };

@@ -43,6 +43,38 @@ function pauseSchedule(
   return mutable;
 }
 
+export function pauseScheduleDefinition(schedule: ScheduleRecord, now: Date): ScheduleRecord {
+  if (schedule.state === "running" || schedule.state === "pending_coalesced") {
+    throw new Error(`Active schedule must be stopped before pausing: ${schedule.scheduleId}`);
+  }
+  if (schedule.state === "paused") {
+    if (schedule.pauseReason === "user") return schedule;
+    throw new Error(`Schedule is not enabled: ${schedule.scheduleId}`);
+  }
+  return pauseSchedule(schedule, "user", now);
+}
+
+export function enableScheduleDefinition(schedule: ScheduleRecord, now: Date): ScheduleRecord {
+  if (schedule.state !== "paused" || schedule.pauseReason !== "user") {
+    throw new Error(`Schedule was not paused by the user: ${schedule.scheduleId}`);
+  }
+  const at = timestamp(now);
+  const nextFireAt = schedule.timing.kind === "recurring"
+    ? nextRecurringFireAt(schedule.timing.anchorAt, schedule.timing.intervalMs, now)
+    : schedule.timing.fireAt;
+  if (Date.parse(nextFireAt) <= now.getTime()) {
+    throw new Error(`One-off schedule has expired and cannot be enabled: ${schedule.scheduleId}`);
+  }
+  const mutable: { -readonly [Key in keyof ScheduleRecord]: ScheduleRecord[Key] } = {
+    ...schedule,
+    state: "enabled",
+    nextFireAt,
+    updatedAt: at,
+  };
+  delete mutable.pauseReason;
+  return mutable;
+}
+
 export function reconcileMissedSchedule(schedule: ScheduleRecord, now: Date): ScheduleRecord {
   if (schedule.state === "running" || schedule.state === "pending_coalesced") {
     return pauseSchedule(schedule, "interrupted", now);

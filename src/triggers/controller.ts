@@ -23,10 +23,18 @@ import {
 } from "./coalescing.js";
 import { TriggerClaimManager } from "./claims.js";
 import { TriggerEventIngress } from "./event-ingress.js";
-import { FilesystemTriggerManager, resolveFilesystemTarget } from "./filesystem.js";
+import { FilesystemTriggerManager, resolveFilesystemTarget, type WatchFunction } from "./filesystem.js";
 
 const TRIGGER_LEASE_STALE_MS = 30_000;
 const CLAIM_LEASE_STALE_MS = 30_000;
+const SETTLEMENT_RETRY_MS = 1_000;
+
+function unrefDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
+}
 
 export interface TriggerCreateRequest {
   readonly source:
@@ -49,6 +57,7 @@ export type TriggerOccurrenceRunner = (
   runId: string,
   signal: AbortSignal,
   kind: TriggerOccurrenceKind,
+  guidance?: string,
 ) => Promise<ScheduleOccurrenceResult>;
 
 interface ActiveOccurrence {
@@ -65,6 +74,7 @@ export class TriggerController {
   readonly #dataRoot: string;
   readonly #now: () => Date;
   readonly #claims: TriggerClaimManager;
+  readonly #settlementRetryMs: number;
   readonly #watchers: FilesystemTriggerManager;
   readonly #queue = new AsyncSerialQueue();
   readonly #active = new Map<string, ActiveOccurrence>();
@@ -79,9 +89,15 @@ export class TriggerController {
     dataRoot?: string;
     now?: () => Date;
     claimLeaseStaleMs?: number;
+    settlementRetryMs?: number;
+    watch?: WatchFunction;
   } = {}) {
     this.#dataRoot = options.dataRoot ?? resolvePiLoopsDataRoot();
     this.#now = options.now ?? (() => new Date());
+    this.#settlementRetryMs = options.settlementRetryMs ?? SETTLEMENT_RETRY_MS;
+    if (!Number.isSafeInteger(this.#settlementRetryMs) || this.#settlementRetryMs <= 0) {
+      throw new Error("Settlement retry interval must be a positive safe integer");
+    }
     this.#eventIngress = new TriggerEventIngress(this.#now);
     this.#claims = new TriggerClaimManager({
       dataRoot: this.#dataRoot,
@@ -93,24 +109,29 @@ export class TriggerController {
         const binding = this.#binding;
         if (binding) await this.fire(triggerId, binding.projectRoot);
       },
-      onError: (triggerId, error) => this.#host?.notify(`${triggerId}: filesystem trigger failed — ${errorMessage(error)}`, "error"),
+      onError: (triggerId, error) => this.#handleFilesystemFailure(triggerId, error),
+      ...(options.watch === undefined ? {} : { watch: options.watch }),
     });
   }
 
   async start(host: TriggerHost, runner: TriggerOccurrenceRunner): Promise<void> {
     await this.#queue.run(async () => {
       if (this.#binding) throw new Error("Trigger controller is already started");
-      this.#binding = await resolveProjectBinding(host.cwd);
+      const binding = await resolveProjectBinding(host.cwd);
+      this.#binding = binding;
       this.#runner = runner;
       this.#host = host;
       this.#stopping = false;
       try {
         await this.#reconcileStoredTriggers();
-        for (const trigger of await new TriggerStore(this.#dataRoot, this.#binding.projectId).list()) {
+        for (const trigger of await new TriggerStore(this.#dataRoot, binding.projectId).list()) {
           try {
             await this.#watchers.upsert(trigger);
           } catch (error) {
             host.notify(`${trigger.triggerId}: filesystem watcher could not start — ${errorMessage(error)}`, "warning");
+            if (trigger.source.kind === "filesystem" && trigger.state === "enabled") {
+              await this.#retryTriggerLease(() => this.#pauseFilesystemDefinition(binding, trigger.triggerId));
+            }
           }
         }
       } catch (error) {
@@ -218,7 +239,7 @@ export class TriggerController {
       try {
         const runId = await createUniqueRunId(new RunStore(this.#dataRoot, binding.projectId));
         let started: TriggerRecord | undefined;
-        await this.#withMutableStore(binding, async (store) => {
+        await this.#retryTriggerLease(() => this.#withMutableStore(binding, async (store) => {
           await this.#claims.assert(claim);
           let latest = await store.load(triggerId);
           if (!latest) throw new Error(`Trigger not found: ${triggerId}`);
@@ -228,7 +249,7 @@ export class TriggerController {
           const decision = fireTrigger(latest, runId, this.#now());
           await store.save(decision.trigger);
           if (decision.action === "start") started = decision.trigger;
-        });
+        }));
         if (!started) return "ignored";
         transferred = this.#launch(started, runId, claim, "start");
         return transferred ? "started" : "ignored";
@@ -296,7 +317,7 @@ export class TriggerController {
     });
   }
 
-  async resumeOccurrence(triggerId: string, runId: string, cwd: string): Promise<void> {
+  async resumeOccurrence(triggerId: string, runId: string, cwd: string, guidance?: string): Promise<void> {
     if (!isTriggerId(triggerId)) throw new Error(`Invalid trigger ID: ${triggerId}`);
     if (!isRunId(runId)) throw new Error(`Invalid run ID: ${runId}`);
     await this.#queue.run(async () => {
@@ -319,7 +340,7 @@ export class TriggerController {
           await store.save(resumed);
         });
         if (!resumed) throw new Error(`Trigger could not be resumed: ${triggerId}`);
-        transferred = this.#launch(resumed, runId, claim, "restart");
+        transferred = this.#launch(resumed, runId, claim, "restart", guidance);
         if (!transferred) throw new Error(`Trigger could not launch resumed run: ${triggerId}`);
       } finally {
         if (!transferred) await this.#claims.release(claim).catch(() => undefined);
@@ -358,7 +379,7 @@ export class TriggerController {
     });
   }
 
-  #launch(trigger: TriggerRecord, runId: string, claim: WriterLease, kind: TriggerOccurrenceKind): boolean {
+  #launch(trigger: TriggerRecord, runId: string, claim: WriterLease, kind: TriggerOccurrenceKind, guidance?: string): boolean {
     const runner = this.#runner;
     if (!runner || this.#stopping || claim.signal.aborted) return false;
     const abort = new AbortController();
@@ -369,22 +390,57 @@ export class TriggerController {
       try {
         let result: ScheduleOccurrenceResult;
         try {
-          result = await runner(trigger, runId, abort.signal, kind);
+          result = guidance === undefined
+            ? await runner(trigger, runId, abort.signal, kind)
+            : await runner(trigger, runId, abort.signal, kind, guidance);
         } catch (error) {
           result = { status: "interrupted" };
           if (!claim.signal.aborted) this.#host?.notify(`${trigger.triggerId}: proactive occurrence failed — ${errorMessage(error)}`, "error");
         }
-        if (!claim.signal.aborted) transferred = await this.#settle(trigger.triggerId, runId, result, claim);
+        if (!claim.signal.aborted) transferred = await this.#settleWithRetry(trigger.triggerId, runId, result, claim);
       } finally {
         claim.signal.removeEventListener("abort", onClaimLoss);
         if (!transferred) await this.#claims.release(claim).catch(() => undefined);
       }
-    })().finally(() => {
+    })().catch((error: unknown) => {
+      if (!claim.signal.aborted) {
+        this.#host?.notify(`${trigger.triggerId}: proactive occurrence settlement failed — ${errorMessage(error)}`, "error");
+      }
+    }).finally(() => {
       if (this.#active.get(trigger.triggerId)?.promise !== promise) return;
       this.#active.delete(trigger.triggerId);
     });
     this.#active.set(trigger.triggerId, { runId, abort, promise });
     return true;
+  }
+
+  async #settleWithRetry(
+    triggerId: string,
+    runId: string,
+    result: ScheduleOccurrenceResult,
+    claim: WriterLease,
+  ): Promise<boolean> {
+    for (;;) {
+      try {
+        await this.#claims.assert(claim);
+        return await this.#settle(triggerId, runId, result, claim);
+      } catch (error) {
+        if (!(error instanceof LeaseUnavailableError)) throw error;
+        this.#host?.notify(`${triggerId}: waiting to persist proactive occurrence result`, "warning");
+        await unrefDelay(this.#settlementRetryMs);
+      }
+    }
+  }
+
+  async #retryTriggerLease<T>(operation: () => Promise<T>): Promise<T> {
+    for (;;) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (!(error instanceof LeaseUnavailableError)) throw error;
+        await unrefDelay(this.#settlementRetryMs);
+      }
+    }
   }
 
   async #settle(
@@ -399,6 +455,7 @@ export class TriggerController {
       await this.#claims.assert(claim);
       let replacement: { trigger: TriggerRecord; runId: string } | undefined;
       await this.#withMutableStore(binding, async (store) => {
+        await this.#claims.assert(claim);
         const current = await store.load(triggerId);
         if (!current || current.activeRunId !== runId) return;
         if (result.status === "interrupted" || this.#pausing.has(triggerId)) {
@@ -424,6 +481,41 @@ export class TriggerController {
       const latest = await store.load(triggerId);
       if (!latest?.activeRunId) throw new Error(`Active trigger occurrence is missing its run ID: ${triggerId}`);
       await store.save(fireTrigger(latest, latest.activeRunId, this.#now()).trigger);
+    });
+  }
+
+  async #handleFilesystemFailure(triggerId: string, error: unknown): Promise<void> {
+    const binding = this.#binding;
+    const host = this.#host;
+    host?.notify(`${triggerId}: filesystem trigger failed — ${errorMessage(error)}`, "error");
+    if (!binding || this.#stopping) return;
+
+    this.#pausing.add(triggerId);
+    try {
+      const occurrence = this.#active.get(triggerId);
+      if (occurrence) {
+        occurrence.abort.abort();
+        await occurrence.promise;
+      }
+      await this.#queue.run(async () => {
+        if (this.#binding?.projectId !== binding.projectId || this.#stopping) return;
+        await this.#retryTriggerLease(() => this.#pauseFilesystemDefinition(binding, triggerId));
+      });
+    } catch (persistenceError) {
+      host?.notify(
+        `${triggerId}: filesystem trigger could not be persisted as paused — ${errorMessage(persistenceError)}`,
+        "error",
+      );
+    } finally {
+      this.#pausing.delete(triggerId);
+    }
+  }
+
+  async #pauseFilesystemDefinition(binding: ProjectBinding, triggerId: string): Promise<void> {
+    await this.#withMutableStore(binding, async (store) => {
+      const current = await store.load(triggerId);
+      if (!current || current.source.kind !== "filesystem" || current.state === "paused") return;
+      await store.save(pauseTrigger(current, this.#now()));
     });
   }
 

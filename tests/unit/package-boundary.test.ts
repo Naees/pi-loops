@@ -47,12 +47,13 @@ describe("package boundary", () => {
     expect(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []).not.toContain("pi-subagents");
   });
 
-  it("accepts current and keyed npm publish report formats", () => {
+  it("accepts npm pack and publish report formats", () => {
     const report = { name: "@naees/pi-loops", version: "0.1.0" };
     expect(packagePublishReport(report, report.name)).toBe(report);
     expect(packagePublishReport({ [report.name]: report }, report.name)).toBe(report);
+    expect(packagePublishReport([report], report.name)).toBe(report);
     expect(packagePublishReport({ other: report }, report.name)).toBeUndefined();
-    expect(packagePublishReport([], report.name)).toBeUndefined();
+    expect(packagePublishReport([{ name: "other" }], report.name)).toBeUndefined();
   });
 
   it("publishes the reviewed artifact through an explicit local tarball path", async () => {

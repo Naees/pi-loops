@@ -68,16 +68,19 @@ Use:
 
 ```text
 /loops status
-/loops resume [run-id] [guidance]
+/loops resume [run-id|schedule-id|trigger-id] [guidance]
 ```
 
 Exactly one resumable run can be resumed without an ID. Multiple candidates require selection. Interrupted and awaiting-user work preserves its finite epoch when safe. Stalled or exhausted work starts a new finite budget epoch and records the previous epoch in history.
 
 Scheduled and proactive restart reuses the run ID, review branch, worktree, managed Pi session, and deadline when safe. A live persisted worker PID is never attached blindly.
+Explicit resume guidance is sent to the first resumed worker cycle. Budget overrides are not supported for unattended resumes and are rejected instead of being ignored.
 
 ## Stop, pause, clean, and delete
 
 - `/loops stop <run-id>` cancels an active occurrence.
+- `/loops stop <schedule-id>` pauses an enabled schedule definition. Stopping an active scheduled occurrence instead records its run as interrupted.
+- `/loops resume <schedule-id>` enables a schedule definition that was explicitly paused by the user. An expired one-off schedule cannot be enabled.
 - `/loops stop <trigger-id>` pauses the trigger definition after cancelling its local active occurrence.
 - `/loops resume <trigger-id>` enables a paused trigger definition.
 - `/loops clean` removes only least-recently-used eligible terminal run records beyond the project limit.

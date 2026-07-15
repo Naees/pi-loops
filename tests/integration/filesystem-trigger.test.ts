@@ -58,10 +58,22 @@ describe("filesystem triggers", () => {
   it("debounces a filesystem event storm into one trigger", async () => {
     const { projectRoot } = await project();
     const onTrigger = vi.fn(async () => undefined);
-    const manager = new FilesystemTriggerManager({ onTrigger, onError: vi.fn() });
+    let listener: ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+    const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
+    const manager = new FilesystemTriggerManager({
+      onTrigger,
+      onError: vi.fn(),
+      watch: (_path, _options, callback) => {
+        listener = callback;
+        return watcher;
+      },
+    });
     await manager.upsert(trigger(projectRoot));
     const input = join(projectRoot, "src", "input.txt");
-    for (let index = 0; index < 20; index += 1) await writeFile(input, `value ${index}\n`);
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(input, `value ${index}\n`);
+      listener?.("change", "input.txt");
+    }
     await vi.waitFor(() => expect(onTrigger).toHaveBeenCalledOnce(), { timeout: 2_000 });
     manager.shutdown();
   });
@@ -69,13 +81,56 @@ describe("filesystem triggers", () => {
   it("fails closed if the watched inode moves outside the project", async () => {
     const { root, projectRoot } = await project();
     const onTrigger = vi.fn(async () => undefined);
-    const manager = new FilesystemTriggerManager({ onTrigger, onError: vi.fn() });
+    const onError = vi.fn();
+    let listener: ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+    const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
+    const manager = new FilesystemTriggerManager({
+      onTrigger,
+      onError,
+      watch: (_path, _options, callback) => {
+        listener = callback;
+        return watcher;
+      },
+    });
     await manager.upsert(trigger(projectRoot));
     const moved = join(root, "moved-src");
     await rename(join(projectRoot, "src"), moved);
     await writeFile(join(moved, "input.txt"), "outside change\n");
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    listener?.("rename", "input.txt");
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
     expect(onTrigger).not.toHaveBeenCalled();
+    expect(watcher.close).toHaveBeenCalledOnce();
+    manager.shutdown();
+  });
+
+  it("revalidates and re-arms a safe same-path atomic replacement", async () => {
+    const { root, projectRoot } = await project();
+    const onTrigger = vi.fn(async () => undefined);
+    const listeners: ((eventType: string, filename: string | Buffer | null) => void)[] = [];
+    const watchers: FSWatcher[] = [];
+    const manager = new FilesystemTriggerManager({
+      onTrigger,
+      onError: vi.fn(),
+      watch: (_path, _options, callback) => {
+        listeners.push(callback);
+        const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
+        watchers.push(watcher);
+        return watcher;
+      },
+    });
+    await manager.upsert(trigger(projectRoot));
+
+    const replaced = join(root, "replaced-src");
+    await rename(join(projectRoot, "src"), replaced);
+    await mkdir(join(projectRoot, "src"));
+    await writeFile(join(projectRoot, "src", "input.txt"), "replacement\n");
+    listeners[0]?.("rename", "input.txt");
+
+    await vi.waitFor(() => expect(onTrigger).toHaveBeenCalledOnce());
+    expect(listeners).toHaveLength(2);
+    expect(watchers[0]?.close).toHaveBeenCalledOnce();
+    listeners[1]?.("change", "input.txt");
+    await vi.waitFor(() => expect(onTrigger).toHaveBeenCalledTimes(2));
     manager.shutdown();
   });
 
@@ -105,9 +160,19 @@ describe("filesystem triggers", () => {
   it("cancels pending debounce work during shutdown", async () => {
     const { projectRoot } = await project();
     const onTrigger = vi.fn(async () => undefined);
-    const manager = new FilesystemTriggerManager({ onTrigger, onError: vi.fn() });
+    let listener: ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+    const watcher = Object.assign(new EventEmitter(), { close: vi.fn(), unref: vi.fn() }) as unknown as FSWatcher;
+    const manager = new FilesystemTriggerManager({
+      onTrigger,
+      onError: vi.fn(),
+      watch: (_path, _options, callback) => {
+        listener = callback;
+        return watcher;
+      },
+    });
     await manager.upsert(trigger(projectRoot));
     await writeFile(join(projectRoot, "src", "input.txt"), "changed\n");
+    listener?.("change", "input.txt");
     await new Promise((resolve) => setTimeout(resolve, 20));
     manager.shutdown();
     await new Promise((resolve) => setTimeout(resolve, 150));

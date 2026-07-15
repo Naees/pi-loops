@@ -289,7 +289,16 @@ describe("Pi extension registration", () => {
       await command.handler("status", ctx);
       expect(notifications.at(-1)?.message).toContain(`${triggerId}  enabled`);
     });
-    await expect(tool.execute("resume-proactive", { action: "resume", runId: proactiveRun?.runId }, new AbortController().signal, undefined, ctx))
+    await expect(tool.execute("resume-proactive-budget", {
+      action: "resume",
+      runId: proactiveRun?.runId,
+      maxCycles: 2,
+    }, new AbortController().signal, undefined, ctx)).rejects.toThrow("Unattended run resume does not accept budget overrides");
+    await expect(tool.execute("resume-proactive", {
+      action: "resume",
+      runId: proactiveRun?.runId,
+      guidance: "inspect the generated files",
+    }, new AbortController().signal, undefined, ctx))
       .resolves.toEqual(expect.objectContaining({ content: [{ type: "text", text: expect.stringContaining("proactive restart requested") }] }));
     for (let index = 0; index < 20; index += 1) {
       eventHandler?.({ schemaVersion: 1, triggerId, goal: `hostile injection ${index}` });
