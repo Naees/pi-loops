@@ -6,7 +6,7 @@ Pi Loops runs only while the parent Pi process is open. It does not install a da
 
 - Supported release line: 0.1.x.
 - Node.js: 22.19.0 or newer.
-- Pi: unattended scheduled and proactive writers are qualified with Pi 0.80.6 on macOS, Linux, and Windows.
+- Pi: unattended scheduled and proactive writers are qualified with Pi 0.82.1 on macOS, Linux, and Windows.
 - Native qualification uses Ubuntu 24.04 and Windows Server 2025 with Node 22.19.0 and Node 24.
 - Git is required for unattended writing. Attended goals use the current checkout.
 - Windows requires PowerShell 7 for Job Object lifecycle containment.
@@ -117,7 +117,7 @@ The child needed interaction that could not be safely relayed, Git finalization 
 
 ### Unsupported platform or Pi version
 
-The unattended runtime gate is intentionally fail-closed outside the documented macOS, Linux, and Windows/Pi 0.80.6 combinations. Do not bypass it based on unit tests or code inspection. On Windows, verify that PowerShell 7 is installed at the standard Program Files location.
+The unattended runtime gate is intentionally fail-closed outside the documented macOS, Linux, and Windows/Pi 0.82.1 combinations. Do not bypass it based on unit tests or code inspection. On Windows, verify that PowerShell 7 is installed at the standard Program Files location.
 
 ### Package removal did not remove state or branches
 

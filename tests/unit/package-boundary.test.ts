@@ -47,6 +47,27 @@ describe("package boundary", () => {
     expect(manifest.bundledDependencies ?? manifest.bundleDependencies ?? []).not.toContain("pi-subagents");
   });
 
+  it("keeps the coupled Pi development runtime on one exact version", async () => {
+    const manifest = JSON.parse(await readFile("package.json", "utf8")) as {
+      devDependencies?: Record<string, string>;
+    };
+    const lock = JSON.parse(await readFile("package-lock.json", "utf8")) as {
+      packages?: Record<string, { version?: string; devDependencies?: Record<string, string> }>;
+    };
+    const piAiVersion = manifest.devDependencies?.["@earendil-works/pi-ai"];
+    const codingAgentVersion = manifest.devDependencies?.["@earendil-works/pi-coding-agent"];
+    expect(piAiVersion).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(codingAgentVersion).toBe(piAiVersion);
+    expect(lock.packages?.[""]?.devDependencies?.["@earendil-works/pi-ai"]).toBe(piAiVersion);
+    expect(lock.packages?.[""]?.devDependencies?.["@earendil-works/pi-coding-agent"]).toBe(piAiVersion);
+
+    const piRuntimeVersions = Object.entries(lock.packages ?? {})
+      .filter(([path]) => /node_modules\/@earendil-works\/pi-(?:agent-core|ai|coding-agent|tui)$/u.test(path))
+      .map(([, entry]) => entry.version);
+    expect(piRuntimeVersions.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(piRuntimeVersions)).toEqual(new Set([piAiVersion]));
+  });
+
   it("accepts npm pack and publish report formats", () => {
     const report = { name: "@naees/pi-loops", version: "0.1.0" };
     expect(packagePublishReport(report, report.name)).toBe(report);

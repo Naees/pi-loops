@@ -122,8 +122,8 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
 
     const auth = await this.#context.modelRegistry.getApiKeyAndHeaders(model);
     if (signal?.aborted) throw new DOMException("Evaluator was aborted", "AbortError");
-    if (!auth.ok || !auth.apiKey) {
-      throw new EvaluatorUnavailableError(auth.ok ? `No API key is available for ${model.provider}` : auth.error);
+    if (!auth.ok) {
+      throw new EvaluatorUnavailableError(auth.error);
     }
 
     const serializedInput = JSON.stringify(boundedInput);
@@ -140,7 +140,7 @@ export class CurrentModelEvaluator implements CompletionEvaluator {
       model,
       { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
       {
-        apiKey: auth.apiKey,
+        ...(auth.apiKey === undefined ? {} : { apiKey: auth.apiKey }),
         ...(auth.headers === undefined ? {} : { headers: auth.headers }),
         ...(auth.env === undefined ? {} : { env: auth.env }),
         ...(signal === undefined ? {} : { signal }),

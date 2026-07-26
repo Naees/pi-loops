@@ -46,7 +46,7 @@ async function resolvePiCommand(): Promise<PiCommand> {
   const executable = isNodeCli ? await realpath(process.execPath) : candidate;
   const argsPrefix = isNodeCli ? [candidate] : [];
   const version = run(executable, [...argsPrefix, "--version"]);
-  assert(/^0\.80\.6(?:\s|$)/.test(version), `Lifecycle qualification requires explicitly validated Pi 0.80.6, received: ${version}`);
+  assert(/^0\.82\.1(?:\s|$)/.test(version), `Lifecycle qualification requires explicitly validated Pi 0.82.1, received: ${version}`);
   return { executable, argsPrefix, version };
 }
 
@@ -191,7 +191,7 @@ async function runLifecycleScenarios(command: PiCommand): Promise<Record<string,
     );
     const launchCommand = JSON.parse((launchNotification.message as string).slice("PI_LOOPS_LAUNCH_COMMAND ".length)) as Record<string, unknown>;
     assert(launchCommand.source === "current-node-cli", `Unexpected current-Pi launch source: ${JSON.stringify(launchCommand)}`);
-    assert(launchCommand.version === "0.80.6", `Unexpected current-Pi launch version: ${JSON.stringify(launchCommand)}`);
+    assert(launchCommand.version === "0.82.1", `Unexpected current-Pi launch version: ${JSON.stringify(launchCommand)}`);
     assert(Array.isArray(launchCommand.argsPrefix) && launchCommand.argsPrefix.length === 1, "Current-Pi launch command did not retain its CLI prefix");
 
     const completionStart = client.checkpoint();

@@ -76,8 +76,8 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.80.6",
-    "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-ai": "0.82.1",
+    "@earendil-works/pi-coding-agent": "0.82.1",
     "@types/node": "24.12.4",
     "@types/proper-lockfile": "4.1.4",
     "@vitest/coverage-v8": "^4.1.9",
