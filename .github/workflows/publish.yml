@@ -49,7 +49,7 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.x
           cache: npm
@@ -106,10 +106,10 @@ jobs:
         with:
           name: npm-release-${{ github.run_id }}
           path: release
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.x
-          # Omit registry-url: setup-node's token auth shim suppresses npm's OIDC exchange.
+          # Disable dependency caching in the trusted-publishing job to reduce cache-poisoning risk.
           package-manager-cache: false
       - name: Validate publication artifact
         run: |
