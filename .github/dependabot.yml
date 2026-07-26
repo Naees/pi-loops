@@ -7,6 +7,10 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     versioning-strategy: increase-if-necessary
+    groups:
+      pi-runtime:
+        patterns:
+          - "@earendil-works/pi-*"
 
   - package-ecosystem: github-actions
     directory: /
@@ -14,3 +18,7 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    groups:
+      codeql:
+        patterns:
+          - "github/codeql-action/*"
