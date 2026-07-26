@@ -46,10 +46,27 @@ describe("current model evaluator provider adapter", () => {
   });
 
   it.each([
-    [{ ok: true }, "No API key is available for test-provider"],
-    [{ ok: false, error: "authentication failed" }, "authentication failed"],
-  ])("fails before provider invocation when authentication is unavailable", async (auth, message) => {
-    await expect(evaluator(auth).evaluate(input)).rejects.toThrow(message);
+    [{ ok: true, headers: { Authorization: "Bearer header-token" } }, { headers: { Authorization: "Bearer header-token" } }],
+    [{ ok: true, env: { AWS_PROFILE: "test-profile" } }, { env: { AWS_PROFILE: "test-profile" } }],
+    [{ ok: true }, {}],
+  ])("supports provider authentication without an API key", async (auth, expectedOptions) => {
+    completeMock.mockResolvedValue({
+      stopReason: "stop",
+      content: [{ type: "text", text: '{"complete":true,"needsUser":false,"reason":"accepted","failedCriteria":[],"feedback":null}' }],
+    });
+
+    await expect(evaluator(auth).evaluate(input)).resolves.toEqual({
+      complete: true,
+      needsUser: false,
+      reason: "accepted",
+      failedCriteria: [],
+      feedback: null,
+    });
+    expect(completeMock.mock.calls[0]?.[2]).toEqual(expectedOptions);
+  });
+
+  it("fails before provider invocation when authentication resolution fails", async () => {
+    await expect(evaluator({ ok: false, error: "authentication failed" }).evaluate(input)).rejects.toThrow("authentication failed");
     expect(completeMock).not.toHaveBeenCalled();
   });
 

@@ -14,7 +14,7 @@ Pi Loops is founded on these simple principles, it should:
 
 It can run goals interactively, on a schedule, or in response to a confirmed filesystem or extension event. Every loop has explicit time and cycle limits, checks its work, and ends with a clear outcome. This will help users to facilitate loop engineering workflows, to find out more about loop engineering here is a [quick start](https://claude.com/blog/getting-started-with-loops) guide.
 
-> **Compatibility:** version 0.1.1 is qualified on macOS, Linux, and Windows with Pi 0.80.6. We welcome collaborators to verify additional operating systems.
+> **Compatibility:** the current 0.1.x development line is qualified on macOS, Linux, and Windows with Pi 0.82.1. We welcome collaborators to verify additional operating systems.
 
 ## What Pi Loops does
 Pi Loops gives Pi a bounded cycle for:
@@ -253,7 +253,7 @@ See [Operations](docs/operations.md) for recovery, retention, worktrees, upgrade
 - [Security policy and private reporting](SECURITY.md)
 
 ## Project status
-Version 0.1.1 includes attended goals, scheduling, proactive triggers, production hardening, and native macOS, Linux, and Windows qualification for Pi 0.80.6.
+The current 0.1.x development line includes attended goals, scheduling, proactive triggers, production hardening, and native macOS, Linux, and Windows qualification for Pi 0.82.1.
 
 Unknown platforms and unqualified Pi versions remain fail-closed for unattended execution.
 

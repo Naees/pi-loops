@@ -61,7 +61,7 @@ test("packed scheduled writer isolates and retains review output", async () => {
     updatedAt: new Date().toISOString(),
   };
   const worker = {
-    identity: { pid: process.pid, ownershipToken: "packed-owner", piVersion: "0.80.6", sessionId: "packed-session", sessionFile: join(dataRoot, "session.jsonl") },
+    identity: { pid: process.pid, ownershipToken: "packed-owner", piVersion: "0.82.1", sessionId: "packed-session", sessionFile: join(dataRoot, "session.jsonl") },
     runCycle: vi.fn(async (_message: string) => {
       await writeFile(join(workerCwd, "packed-result.txt"), "packed scheduled output\n");
       return { lastAssistantText: "implemented packed result", events: [] };
@@ -125,7 +125,7 @@ test("packed proactive writer isolates and retains review output", async () => {
   };
   let workerCwd = "";
   const worker = {
-    identity: { pid: process.pid, ownershipToken: "packed-proactive-owner", piVersion: "0.80.6", sessionId: "packed-proactive-session", sessionFile: join(dataRoot, "proactive-session.jsonl") },
+    identity: { pid: process.pid, ownershipToken: "packed-proactive-owner", piVersion: "0.82.1", sessionId: "packed-proactive-session", sessionFile: join(dataRoot, "proactive-session.jsonl") },
     runCycle: vi.fn(async () => {
       await writeFile(join(workerCwd, "proactive-result.txt"), "packed proactive output\n");
       return { lastAssistantText: "implemented proactive result", events: [] };

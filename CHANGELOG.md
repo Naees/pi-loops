@@ -4,6 +4,14 @@ Pi Loops follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade the coupled Pi development runtime packages and requalify unattended scheduled and proactive writers for Pi 0.82.1 across macOS, Ubuntu 24.04, and Windows Server 2025.
+
+### Fixed
+
+- Allow completion evaluation through providers whose authentication resolves through request headers or ambient credentials instead of an API key.
+
 ## [0.1.1] - 2026-07-15
 
 ### Fixed

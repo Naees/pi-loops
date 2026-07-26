@@ -95,6 +95,7 @@ test("packed package reads frozen version-one state without rewriting it", async
     state: "interrupted",
     worker: expect.objectContaining({
       branch: "pi-loops/run_cafebabe",
+      piVersion: "0.80.6",
       worktreeRetained: true,
     }),
   }));

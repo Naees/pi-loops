@@ -109,7 +109,7 @@ function workers() {
     identity: {
       pid: 2_147_483_647,
       ownershipToken: "ownership-token",
-      piVersion: "0.80.6",
+      piVersion: "0.82.1",
       sessionId: "session-id",
       sessionFile: "/tmp/session.jsonl",
     },

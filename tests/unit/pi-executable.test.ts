@@ -29,8 +29,8 @@ async function createNodeCli(root: string, version: string, source = "// fixture
 describe("current Pi executable resolution", () => {
   it("uses the current Node CLI instead of searching PATH", async () => {
     const root = await temporaryRoot();
-    const cli = await createNodeCli(root, "0.80.6");
-    const probeVersion = vi.fn(async () => "0.80.6");
+    const cli = await createNodeCli(root, "0.82.1");
+    const probeVersion = vi.fn(async () => "0.82.1");
 
     const resolved = await resolveCurrentPiLaunchCommand({
       execPath: process.execPath,
@@ -42,7 +42,7 @@ describe("current Pi executable resolution", () => {
     expect(resolved).toEqual({
       executable: await realpath(process.execPath),
       argsPrefix: [canonicalCli],
-      version: "0.80.6",
+      version: "0.82.1",
       source: "current-node-cli",
     });
     expect(probeVersion).toHaveBeenCalledWith(await realpath(process.execPath), [canonicalCli]);
@@ -70,13 +70,13 @@ describe("current Pi executable resolution", () => {
     await expect(resolveCurrentPiLaunchCommand({
       execPath: process.execPath,
       argv: [process.execPath, "/tmp/unrelated-script.js"],
-      probeVersion: async () => "0.80.6",
+      probeVersion: async () => "0.82.1",
     })).rejects.toThrow("Could not identify the current Pi installation");
   });
 
   it("rejects unexpected version output", async () => {
     const root = await temporaryRoot();
-    const cli = await createNodeCli(root, "0.80.6");
+    const cli = await createNodeCli(root, "0.82.1");
 
     await expect(resolveCurrentPiLaunchCommand({
       execPath: process.execPath,
@@ -92,19 +92,19 @@ describe("current Pi executable resolution", () => {
     await expect(resolveCurrentPiLaunchCommand({
       execPath: process.execPath,
       argv: [process.execPath, cli],
-      probeVersion: async () => "0.80.6",
+      probeVersion: async () => "0.82.1",
     })).rejects.toThrow("does not match executable version");
   });
 
   it("bounds the current Pi package manifest read", async () => {
     const root = await temporaryRoot();
-    const cli = await createNodeCli(root, "0.80.6");
+    const cli = await createNodeCli(root, "0.82.1");
     await writeFile(join(cli, "..", "..", "package.json"), Buffer.alloc(256 * 1024 + 1));
 
     await expect(resolveCurrentPiLaunchCommand({
       execPath: process.execPath,
       argv: [process.execPath, cli],
-      probeVersion: async () => "0.80.6",
+      probeVersion: async () => "0.82.1",
     })).rejects.toThrow("Pi package manifest exceeds 262144 bytes");
   });
 

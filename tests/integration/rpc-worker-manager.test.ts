@@ -85,7 +85,7 @@ async function harness(options: {
     resolveLaunch: async () => ({
       executable: process.execPath,
       argsPrefix: ["-e", options.program ?? fakeRpcProgram, "--"],
-      version: options.version ?? "0.80.6",
+      version: options.version ?? "0.82.1",
       source: "current-node-cli",
     }),
     ...(options.qualification === undefined ? {} : { qualification: options.qualification }),
@@ -283,7 +283,7 @@ describe("RPC worker manager", () => {
     const resolveLaunch = vi.fn(async () => ({
       executable: process.execPath,
       argsPrefix: [] as string[],
-      version: "0.80.6",
+      version: "0.82.1",
       source: "current-node-cli" as const,
     }));
     const manager = new RpcWorkerManager({ platform: "darwin", resolveLaunch });
@@ -297,14 +297,14 @@ describe("RPC worker manager", () => {
     }
     expect(resolveLaunch).not.toHaveBeenCalled();
 
-    const mismatched = await harness({ version: "0.80.5" });
+    const mismatched = await harness({ version: "0.80.6" });
     try {
       await expect(mismatched.manager.launch({
         runId: "run_1234abcd",
         cwd: mismatched.cwd,
         sessionDirectory: mismatched.sessions,
         absoluteDeadlineMs: Date.now() + 60_000,
-      }, hostUi())).rejects.toThrow("require validated Pi 0.80.6");
+      }, hostUi())).rejects.toThrow("require validated Pi 0.82.1");
       await expect(readFile(mismatched.argvFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       mismatched.restore();
